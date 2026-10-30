@@ -13,18 +13,27 @@ android {
         applicationId = "dev.plume"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "1.5"
-        // What's new: only this version's section of CHANGELOG.md ships, one entry per line, without ** marks.
+        versionCode = 8
+        versionName = "1.6"
+        // What's new: only this version's section of CHANGELOG.md ships, one entry per line, ** marks kept for bold.
+        // A ### heading ships as a line that starts with #.
         val notes = rootProject.file("CHANGELOG.md").readText().replace("\r", "")
             .substringAfter("\n## $versionName\n", "").substringBefore("\n## ")
-            .lines().filter { it.startsWith("- ") }.map { it.removePrefix("- ").replace("**", "") }
+            .lines().filter { it.startsWith("- ") || it.startsWith("### ") }
+            .map { if (it.startsWith("### ")) "#" + it.removePrefix("### ") else it.removePrefix("- ") }
         require(notes.isNotEmpty()) { "CHANGELOG.md has no entries under \"## $versionName\"" }
         resValue("string", "whats_new", notes.joinToString("\\n") { it.replace("'", "\\'").replace("\"", "\\\"") })
     }
 
     buildFeatures {
         resValues = true
+    }
+
+    // CI fails on new lint errors only; the ones already here are listed in lint-baseline.xml
+    // (./gradlew updateLintBaseline rewrites it). Translations have their own check, so lag there isn't an error.
+    lint {
+        baseline = file("lint-baseline.xml")
+        disable += setOf("MissingTranslation", "ExtraTranslation")
     }
 
     // Release key lives outside the repo; keystore.properties (git-ignored) points at it. Without that file
@@ -40,11 +49,24 @@ android {
         }
     }
 
+    // Kotlin's own metadata files (reflection and tooling data) aren't used at run time.
+    packaging {
+        resources {
+            excludes += setOf("kotlin/**", "**/*.kotlin_builtins", "META-INF/*.kotlin_module", "META-INF/*.version", "DebugProbesKt.bin")
+        }
+    }
+
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
+    }
+
     buildTypes {
         release {
+            vcsInfo.include = false
             isMinifyEnabled = true
             isShrinkResources = true
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }

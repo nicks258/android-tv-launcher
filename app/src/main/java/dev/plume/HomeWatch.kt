@@ -30,7 +30,7 @@ class HomeWatch {
 
     companion object {
         private const val PLUME = "dev.plume"
-        private const val GOOGLE_TV = "com.google.android.apps.tv.launcherx"
+        const val GOOGLE_TV = "com.google.android.apps.tv.launcherx"
         private const val AMAZON = "com.amazon.tv.launcher"
         private const val OLD_AMAZON = "com.amazon.firelauncher"
         private const val AMAZON_SETTINGS = "com.amazon.tv.settings"

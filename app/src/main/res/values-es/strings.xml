@@ -196,7 +196,7 @@
     <!-- Ventanas de configuración del botón Inicio -->
     <string name="setup_home">Repetir configuración</string>
     <string name="preview_home_setup">Vista previa de configuración de Inicio</string>
-    <string name="setup_step">Paso %1$d de 3</string>
+    <string name="setup_step">Paso %1$d de %2$d</string>
     <string name="setup_role_title">Haz que Plume sea tu pantalla de inicio</string>
     <string name="setup_role_body">Android preguntará qué aplicación usar como pantalla de inicio. Elige Plume.</string>
     <string name="setup_test_title">Pulsa Inicio en tu control remoto</string>
@@ -213,6 +213,10 @@
     <string name="setup_not_now">Ahora no</string>
     <string name="setup_skip_check">Omitir esta comprobación</string>
     <string name="setup_open_accessibility">Abrir Accesibilidad</string>
+    <string name="setup_restricted_title">Permite el botón Inicio de Plume</string>
+    <string name="setup_restricted_body">Esta TV atenúa el interruptor para apps instaladas fuera de Play Store. En Información de la app, selecciona \"Permitir ajustes restringidos\". En algunas TV está en el menú ⋮. Luego pulsa Atrás para volver aquí.</string>
+    <string name="setup_open_app_info">Abrir Información de la app</string>
+    <string name="setup_no_menu">No lo encuentro</string>
     <string name="setup_try_again">Intentar de nuevo</string>
     <string name="setup_close">Cerrar</string>
     <string name="setup_done">Listo</string>

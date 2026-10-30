@@ -11,6 +11,9 @@ class HdmiInputsTest {
         assertEquals("xbox", hdmiIcon("Xbox Series X", true))
         assertEquals("nintendoswitch", hdmiIcon("NintendoSwitch", true))
         assertEquals("appletv", hdmiIcon("Apple TV", true))
+        assertEquals("nvidia", hdmiIcon("SHIELD", true))
+        assertEquals("chromecast", hdmiIcon("Chromecast", true))
+        assertEquals("chromecast", hdmiIcon("Google TV Streamer", true))
         assertEquals("settop", hdmiIcon("Sky Q", true))
         assertEquals("playback", hdmiIcon("BD Player", true))
         assertEquals("hdmi", hdmiIcon("HDMI 2", false))
@@ -18,6 +21,13 @@ class HdmiInputsTest {
         assertEquals("settop", hdmiIcon("Cable box", false))
         assertTrue(isAudioDevice("Sonos Arc"))
         assertFalse(isAudioDevice("PlayStation 5"))
+    }
+
+    @Test fun fireOsPortIsTheHardwareNumber() {
+        assertEquals(2, Remap.hardwareNumber("com.mediatek.tvinput/.hdmi.HDMIInputService/HW2"))
+        assertEquals(10, Remap.hardwareNumber("com.mediatek.tvinput/.hdmi.HDMIInputService/HW10"))
+        assertEquals(null, Remap.hardwareNumber("com.example.tuner/.TunerService"))
+        assertEquals(null, Remap.hardwareNumber("com.example/.Service/HW2/HDMI2050")) // a CEC device's id, not its port's
     }
 
     @Test fun row() {

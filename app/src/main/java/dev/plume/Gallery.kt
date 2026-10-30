@@ -67,7 +67,7 @@ class GalleryDream : DreamService() {
             return true
         }
         if (e.action == KeyEvent.ACTION_UP) {
-            startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            startActivity(Intent(this, MainActivity::class.java).setAction(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             finish()
         }
         return true
@@ -143,9 +143,9 @@ private class GalleryShow(private val context: Context) : SurfaceHolder.Callback
     }
 
     fun release() {
+        running = false // first: the render thread stops asking for the next painting before the pool is shut
         io.shutdownNow()
         synchronized(lock) {
-            running = false
             current?.bmp?.recycle()
             previous?.bmp?.recycle()
             current = null

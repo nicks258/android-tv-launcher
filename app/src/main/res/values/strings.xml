@@ -48,6 +48,7 @@
     <string name="done">Done</string>
     <string name="edit_apps_row">Rearrange apps</string>
     <string name="theme">Theme</string>
+    <string name="app_animations">App animations</string>
     <string name="fade_top">Top fade</string>
     <string name="fade_bottom">Bottom fade</string>
     <string name="glass">Glass</string>
@@ -106,6 +107,11 @@
     <string name="pin_forgot">Forgot it? Android Settings → Apps → Plume → Clear data removes the lock, along with your layout and settings.</string>
     <string name="tip_move">Tip: hold OK on an app to rearrange the row</string>
     <string name="open">Open</string>
+    <string name="hide">Hide</string>
+    <string name="add_icon">Add icon</string>
+    <string name="icon_hidden">Hidden. To bring it back, hold OK on an icon and select Add icon.</string>
+    <string name="shows_with_input">Shows when the TV has an input</string>
+    <string name="top_bar_hint">Hold OK on a top-bar icon to move, hide or add icons.</string>
     <string name="move">Move</string>
     <string name="remove_from_row">Remove from row</string>
     <string name="removed_from_row">Removed from the row. It\'s still in All apps.</string>
@@ -198,7 +204,7 @@
     <!-- Home setup popups -->
     <string name="setup_home">Run setup again</string>
     <string name="preview_home_setup">Preview Home setup popups</string>
-    <string name="setup_step">Step %1$d of 3</string>
+    <string name="setup_step">Step %1$d of %2$d</string>
     <string name="setup_role_title">Make Plume your home screen</string>
     <string name="setup_role_body">Android will ask which app to use as your home screen. Choose Plume.</string>
     <string name="setup_test_title">Press Home on your remote</string>
@@ -215,6 +221,10 @@
     <string name="setup_not_now">Not now</string>
     <string name="setup_skip_check">Skip this check</string>
     <string name="setup_open_accessibility">Open Accessibility</string>
+    <string name="setup_restricted_title">Allow Plume\'s Home button</string>
+    <string name="setup_restricted_body">This TV greys out the switch for apps installed outside the Play Store. In App info, select \"Allow restricted settings\". On some TVs it is under the ⋮ menu. Then press Back to come back here.</string>
+    <string name="setup_open_app_info">Open App info</string>
+    <string name="setup_no_menu">I can\'t find it</string>
     <string name="setup_try_again">Try again</string>
     <string name="setup_close">Close</string>
     <string name="setup_done">Done</string>
@@ -277,4 +287,17 @@
         <item quantity="one">%d key</item>
         <item quantity="other">%d keys</item>
     </plurals>
+    <string name="fire_os_no_input">Fire TV didn\'t let Plume switch to this input. Hold Home and pick Inputs.</string>
+    <string name="shows_wallpaper">Shows from your apps</string>
+    <string name="wp_sources">Wallpaper from</string>
+    <string name="wp_usable">%1$d/%2$d</string>
+    <string name="featured_now">Featured: %1$s</string>
+    <string name="help_wp_sources">The sources whose pictures become the wallpaper: Android TV Watch Next, or a channel of an app. Plume uses only wide pictures. It skips posters, squares and pictures that it cannot get. The wallpaper changes as often as a folder of photos does.</string>
+    <string name="wp_dim">Darkening</string>
+    <string name="dim_auto">Auto</string>
+    <string name="dim_none">None</string>
+    <string name="dim_light">Light</string>
+    <string name="dim_medium">Medium</string>
+    <string name="dim_strong">Strong</string>
+    <string name="help_wp_dim">The black laid over a Bing or shows picture in dark mode, so that the clock, the icons and the cards stay easy to read. Auto adds more black to a bright picture and lifts a very dark one a little.</string>
 </resources>

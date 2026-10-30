@@ -47,6 +47,7 @@
     <string name="done">Terminé</string>
     <string name="edit_apps_row">Modifier la ligne d\'applis</string>
     <string name="theme">Thème</string>
+    <string name="app_animations">Animations des applis</string>
     <string name="fade_top">Fondu en haut</string>
     <string name="fade_bottom">Fondu en bas</string>
     <string name="glass">Verre dépoli</string>
@@ -95,6 +96,11 @@
     <string name="pin_forgot">Oublié ? Paramètres Android → Applis → Plume → Effacer les données supprime le verrou, ainsi que votre disposition et vos paramètres.</string>
     <string name="tip_move">Astuce : maintenez OK sur une appli pour réorganiser la ligne</string>
     <string name="open">Ouvrir</string>
+    <string name="hide">Masquer</string>
+    <string name="add_icon">Ajouter une icône</string>
+    <string name="icon_hidden">Masquée. Pour la remettre, maintenez OK sur une icône et choisissez Ajouter une icône.</string>
+    <string name="shows_with_input">S\'affiche quand la TV a une entrée</string>
+    <string name="top_bar_hint">Maintenez OK sur une icône de la barre du haut pour la déplacer, la masquer ou en ajouter.</string>
     <string name="move">Déplacer</string>
     <string name="remove_from_row">Retirer de la ligne</string>
     <string name="removed_from_row">Retirée de la ligne. Elle reste dans Toutes les applis.</string>
@@ -155,7 +161,7 @@
     <!-- Fenêtres de configuration du bouton Accueil -->
     <string name="setup_home">Configurer le bouton Accueil</string>
     <string name="preview_home_setup">Aperçu des fenêtres de configuration Accueil</string>
-    <string name="setup_step">Étape %1$d sur 3</string>
+    <string name="setup_step">Étape %1$d sur %2$d</string>
     <string name="setup_role_title">Faire de Plume votre écran d\'accueil</string>
     <string name="setup_role_body">Android va demander quelle appli utiliser comme écran d\'accueil. Choisissez Plume.</string>
     <string name="setup_test_title">Appuyez sur Accueil sur votre télécommande</string>
@@ -172,6 +178,10 @@
     <string name="setup_not_now">Plus tard</string>
     <string name="setup_skip_check">Passer cette vérification</string>
     <string name="setup_open_accessibility">Ouvrir l\'accessibilité</string>
+    <string name="setup_restricted_title">Autoriser le bouton Accueil de Plume</string>
+    <string name="setup_restricted_body">Cette TV grise l\'interrupteur pour les applis installées hors du Play Store. Dans Infos sur l\'appli, sélectionnez \"Autoriser les paramètres restreints\". Sur certaines TV, c\'est dans le menu ⋮. Puis appuyez sur Retour pour revenir ici.</string>
+    <string name="setup_open_app_info">Ouvrir Infos sur l\'appli</string>
+    <string name="setup_no_menu">Je ne le trouve pas</string>
     <string name="setup_try_again">Réessayer</string>
     <string name="setup_close">Fermer</string>
     <string name="setup_done">Terminé</string>
@@ -233,4 +243,17 @@
     <string name="watch_next">À suivre (Android TV)</string>
     <string name="bottom_row">Rangée du bas</string>
     <string name="automatic">Automatique</string>
+    <string name="fire_os_no_input">Fire TV n\'a pas laissé Plume changer d\'entrée. Maintenez Accueil et choisissez Entrées.</string>
+    <string name="shows_wallpaper">Séries de vos applis</string>
+    <string name="wp_sources">Fond d\'écran depuis</string>
+    <string name="wp_usable">%1$d/%2$d</string>
+    <string name="featured_now">À l\'affiche : %1$s</string>
+    <string name="help_wp_sources">Les sources dont les images deviennent le fond d\'écran : Watch Next d\'Android TV, ou une chaîne d\'une appli. Seules les images larges comptent (les affiches et les carrés sont écartés), et une image introuvable est passée. Le fond change aussi souvent qu\'un dossier de photos.</string>
+    <string name="wp_dim">Assombrissement</string>
+    <string name="dim_auto">Auto</string>
+    <string name="dim_none">Aucun</string>
+    <string name="dim_light">Léger</string>
+    <string name="dim_medium">Moyen</string>
+    <string name="dim_strong">Fort</string>
+    <string name="help_wp_dim">Le noir posé sur une image Bing ou Séries en mode sombre, pour que l\'heure, les icônes et les cartes restent lisibles. Auto regarde chaque image : une image claire reçoit plus de noir, une image très sombre est un peu éclaircie.</string>
 </resources>

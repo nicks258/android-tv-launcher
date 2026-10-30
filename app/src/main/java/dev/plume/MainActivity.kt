@@ -3,6 +3,7 @@ package dev.plume
 import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.app.Activity
+import android.app.ActivityOptions
 import android.app.Dialog
 import android.app.PendingIntent
 import android.app.role.RoleManager
@@ -63,6 +64,7 @@ import android.text.SpannableString
 import android.text.TextUtils
 import android.text.format.DateFormat
 import android.text.style.BulletSpan
+import android.text.style.StyleSpan
 import android.util.LruCache
 import android.view.Gravity
 import android.view.KeyEvent
@@ -75,6 +77,7 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.GridLayout
+import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.PopupWindow
@@ -82,6 +85,7 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import java.io.File
+import java.lang.ref.WeakReference
 import java.io.IOException
 import java.io.InputStream
 import java.net.HttpURLConnection
@@ -142,6 +146,19 @@ internal fun watchSortKey(type: Long, engaged: Long): Long {
 }
 
 /**
+ * Sort key of a card from an app's home-screen channel. Channels have no Watch Next type, so every card counts as
+ * "continue". The card's own last-watched time when the app sets one (Nuvio does), else the time the app was last
+ * opened from Plume.
+ */
+internal fun channelSortKey(engaged: Long, opened: Long) = watchSortKey(0, if (engaged > 0) engaged else opened)
+
+/**
+ * Rows as (weight, sort key, item) to (sort key, item), highest weight first. A channel's cards often share one sort
+ * key; the weight is the app's own order for them (Nuvio gives its newest the highest), and [newestPerApp] keeps it.
+ */
+internal fun <T> byWeight(rows: List<Triple<Long, Long, T>>) = rows.sortedByDescending { it.first }.map { it.second to it.third }
+
+/**
  * Newest first across apps (ties keep their order), each app's [perApp] newest ahead of the rest: one app's ten
  * shows can't bury the others. The rest follow, newest first, so an app on its own isn't held to [perApp].
  */
@@ -179,6 +196,8 @@ internal fun hdmiIcon(name: String, named: Boolean): String {
         "xbox" in n -> "xbox"
         "nintendo" in n || "switch" in n -> "nintendoswitch"
         "apple tv" in n || "appletv" in n -> "appletv"
+        "shield" in n -> "nvidia"
+        "chromecast" in n || "google tv" in n -> "chromecast"
         SET_TOP_WORDS.any { it in n } -> "settop"
         named -> "playback"
         else -> "hdmi"
@@ -211,7 +230,7 @@ internal fun iconStyleOf(stored: String?, oldColour: Boolean) =
 /** Allowed to start an activity from the background because the Home button service is bound. */
 class Updated : BroadcastReceiver() {
     override fun onReceive(c: Context, i: Intent) {
-        c.startActivity(Intent(c, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        c.startActivity(Intent(c, MainActivity::class.java).setAction(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 }
 
@@ -230,7 +249,7 @@ class MainActivity : Activity() {
     }
     /** [group]: what shares the front places in Continue Watching, the app or, for an app channel, that channel. */
     private class Prog(val title: String, val sub: String, val progress: Int, val image: String?, val intent: String?, val pkg: String?,
-                       val group: String? = pkg)
+                       val group: String? = pkg, val wide: Boolean = true) // wide: the art can be a wallpaper (see ShowsWall.wide)
 
     private val prefs by lazy { getSharedPreferences("home", MODE_PRIVATE) }
     private val io = Executors.newSingleThreadExecutor()
@@ -291,6 +310,7 @@ class MainActivity : Activity() {
     private val net = object : ConnectivityManager.NetworkCallback() {
         override fun onCapabilitiesChanged(n: Network, caps: NetworkCapabilities) {
             ui.post {
+                if (isDestroyed) return@post
                 showNet(caps)
                 // Online again (e.g. Wi-Fi coming up after boot): fetch any posters that failed meanwhile.
                 if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) retryPosters()
@@ -316,7 +336,7 @@ class MainActivity : Activity() {
         allApps = findViewById(R.id.allApps)
         allAppsGrid = findViewById(R.id.allAppsGrid)
         wifi = findViewById(R.id.wifi)
-        findViewById<View>(R.id.sourcesButton).visibility = if (sources.isEmpty()) View.GONE else View.VISIBLE
+        applyTopBar()
         applyTheme()
         loadWallpaper()
         // "Show row: On Down": the row slides in while one of its cards has focus, however focus got there.
@@ -348,8 +368,11 @@ class MainActivity : Activity() {
                     .setDuration(160).setInterpolator(DECELERATE).start()
             }
             setOnClickListener { action() }
+            setOnLongClickListener { if (!holdFired) fireHold(this); true } // hold OK: move, hide or add icons
         }
-        if (prefs.getBoolean("reopen_settings", false)) {
+        if (fakeSetup(intent)) {
+            // debug: setup for a pretend TV already started
+        } else if (prefs.getBoolean("reopen_settings", false)) {
             prefs.edit().remove("reopen_settings").apply()
             ui.post { openLauncherSettings(R.string.theme) }
         } else if (!homeServiceOn() && !prefs.getBoolean("setup_shown", false)) {
@@ -379,6 +402,9 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         resumed = true
+        returnTo = null // back by another way than Home: the next Home starts again at the first tile
+        openedFrom?.get()?.let { tile -> ui.post { if (tile.isAttachedToWindow) settleRow(tile) } }
+        openedFrom = null
         ensureHomeService()
         homeSetupResumed()
         if (wantDark() != dark) {
@@ -394,6 +420,7 @@ class MainActivity : Activity() {
         ui.postDelayed(themeTick, 60_000L)
         ui.removeCallbacks(wallpaperTick)
         ui.post(wallpaperTick)
+        updateFeatured()
         // Gallery chosen but its paintings missing (updated from a version that bundled them): fetch them.
         if (galleryOn() && photoScreensaver() == null && !paintingsReady(this)) downloadPaintings {}
         checkUpdate(force = false)
@@ -431,6 +458,7 @@ class MainActivity : Activity() {
         ui.removeCallbacks(themeTick)
         ui.removeCallbacks(wallpaperTick)
         if (editing) endEdit()
+        if (movingTop != null) endTopMove(false) // Home or an app opened in the middle of a move: the bar goes back as it was
         super.onPause()
     }
 
@@ -452,6 +480,7 @@ class MainActivity : Activity() {
         applicationContext.getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(net)
         getSystemService(TvInputManager::class.java)?.unregisterCallback(inputCallback)
         upload?.stop()
+        ui.removeCallbacksAndMessages(null) // the clocks and the posts still queued must not use the pools below
         io.shutdownNow()
         posterIo.shutdownNow()
         super.onDestroy()
@@ -547,24 +576,59 @@ class MainActivity : Activity() {
 
     // ---------- Home setup ----------
     // Popups that try each way of making Home land on Plume, stopping at the first that works: the default-home
-    // role, then the Home button service, then adb help for TVs that grey out the service (Android 13+
-    // "restricted settings" for sideloaded apps). Each way is checked by asking for a Home press: one that
-    // reaches us arrives as a Home intent; one that doesn't sends us to the background.
+    // role (skipped on Google TV and Fire TV, which ignore it), then the Home button service, then on Android 13+
+    // App info's "Allow restricted settings" for sideloaded apps, then adb help for TVs that still grey it out.
+    // Each way is checked by asking for a Home press: one that reaches us arrives as a Home intent; one that
+    // doesn't sends us to the background.
 
     private var setupDialog: Dialog? = null
-    private var setupStep = 0 // 1 role dialog open, 2 Accessibility settings open
+    private var setupStep = 0 // 1 role dialog open, 2 Accessibility settings open, 3 App info open
     private var homeTest = 0 // the way being checked (1 role, 2 service) while waiting for a Home press
     private var leftDuringTest = false
     private var previewAt = -1 // debug builds: which popup the preview is on, -1 when not previewing
+    private var restrictedTried = false // App info's "Allow restricted settings" already offered this round
+
+    /** Google TV takes the home role but its own launcher still gets Home, so only the service works there. */
+    private fun googleTv() = fakeDevice?.let { it == "google" } ?: try {
+        packageManager.getPackageInfo(HomeWatch.GOOGLE_TV, 0)
+        true
+    } catch (e: PackageManager.NameNotFoundException) {
+        false
+    }
+
+    private fun fireTv() = fakeDevice?.let { it == "fire" } ?: HomeOverride.fireTv(this)
+    private fun sdk() = if (fakeSdk > 0) fakeSdk else Build.VERSION.SDK_INT
+
+    /**
+     * Debug builds: act as another TV and start setup as on a first launch, to walk each device's popups here.
+     * adb shell am start -n dev.plume/.MainActivity --es fake_device fire|google|stock|real --ei fake_sdk 33
+     * Only the setup's choices change; the TV's own screens and Home key stay what they are.
+     */
+    private fun fakeSetup(intent: Intent?): Boolean {
+        val device = intent?.getStringExtra("fake_device") ?: return false
+        if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0) return false
+        fakeDevice = device.takeIf { it != "real" }
+        fakeSdk = intent.getIntExtra("fake_sdk", 0)
+        ui.post { startHomeSetup() }
+        return true
+    }
+
+    /** Home opens Plume one way or the other: the service anywhere, the role only where the TV honours it. */
+    private fun homeSetUp() = homeServiceOn() || (isDefaultHome() && !googleTv() && !fireTv())
 
     private fun startHomeSetup() {
-        if (HomeOverride.fireTv(this)) return tryHomeService() // Fire OS takes the role request and ignores it
+        restrictedTried = false
+        // Fire OS takes the role request and ignores it; Google TV grants it and still opens its own launcher.
+        if (fireTv() || googleTv()) return tryHomeService()
         val roles = if (Build.VERSION.SDK_INT >= 29) getSystemService(RoleManager::class.java) else null
         if (roles != null && roles.isRoleAvailable(RoleManager.ROLE_HOME) && !roles.isRoleHeld(RoleManager.ROLE_HOME)) rolePopup()
         else afterHomeRole()
     }
 
     private fun afterHomeRole() = if (isDefaultHome() || homeServiceOn()) testPopup(1) else tryHomeService()
+
+    /** Service still off after Accessibility: on Android 13+ a sideloaded app's toggle is greyed until App info allows it. */
+    private fun serviceStillOff() = if (sdk() >= 33 && !restrictedTried) restrictedPopup() else adbPopup()
 
     private fun tryHomeService() {
         prefs.edit().remove("home_off").apply()
@@ -576,7 +640,10 @@ class MainActivity : Activity() {
     private fun homeSetupResumed() {
         if (setupStep == 2) {
             setupStep = 0
-            if (homeServiceOn()) testPopup(2) else adbPopup()
+            if (homeServiceOn()) testPopup(2) else serviceStillOff()
+        } else if (setupStep == 3) {
+            setupStep = 0
+            servicePopup()
         } else if (homeTest != 0 && leftDuringTest) {
             val failed = homeTest
             homeTest = 0
@@ -611,6 +678,22 @@ class MainActivity : Activity() {
         },
         getString(R.string.setup_not_now) to { setupDialog?.dismiss() })
 
+    /** Android 13+ "restricted settings": App info has "Allow restricted settings", as a row or under ⋮, on TVs that show it. */
+    private fun restrictedPopup() {
+        if (previewAt < 0) restrictedTried = true
+        homePopup(2, getString(R.string.setup_restricted_title), getString(R.string.setup_restricted_body), null,
+            getString(R.string.setup_open_app_info) to {
+                setupStep = 3
+                try {
+                    startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
+                } catch (e: Exception) {
+                    setupStep = 0
+                    adbPopup()
+                }
+            },
+            getString(R.string.setup_no_menu) to { adbPopup() })
+    }
+
     /** The one-time grant lets Plume switch the service on itself, past the greyed-out toggle. */
     private fun adbPopup() {
         val mono = Typeface.MONOSPACE
@@ -644,7 +727,8 @@ class MainActivity : Activity() {
     }
 
     /**
-     * Once after an update: the first three CHANGELOG.md lines of this version, so put the best ones first.
+     * Once after an update: the first four CHANGELOG.md entries of this version, so put the best ones first.
+     * The card shows each entry's bold headline and the sentence after it; See all changes shows the rest.
      * Closing it counts as reading the notes, which clears the dot on the Plume settings icon.
      */
     private fun whatsNewCard() {
@@ -652,9 +736,11 @@ class MainActivity : Activity() {
         updateBadge()
         val notes = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            getString(R.string.whats_new).split('\n').take(3).forEach {
+            getString(R.string.whats_new).split('\n').filter { !it.startsWith("#") }.take(4).forEach {
+                val head = it.indexOf("**", 2)
+                val cut = if (head < 0) -1 else it.indexOf(". ", head + 2)
                 addView(label("", 15f).apply {
-                    text = SpannableString(it).apply { setSpan(BulletSpan(dp(10), fg), 0, it.length, 0) }
+                    text = noteText(if (cut < 0) it else it.substring(0, cut + 1))
                     maxLines = Int.MAX_VALUE
                     ellipsize = null
                     setLineSpacing(0f, 1.15f)
@@ -671,7 +757,7 @@ class MainActivity : Activity() {
     }
 
     private fun donePopup() = homePopup(0, getString(R.string.setup_done_title),
-        getString(if (homeServiceOn()) R.string.setup_done_body_service else R.string.setup_done_body), null,
+        getString(if (homeServiceOn() && !fireTv()) R.string.setup_done_body_service else R.string.setup_done_body), null,
         getString(R.string.setup_done) to { setupDialog?.dismiss() })
 
     /** A card in the middle of the screen over the dimmed home screen, in the hold menus' colours. */
@@ -686,7 +772,9 @@ class MainActivity : Activity() {
         card.apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(28), dp(24), dp(28), dp(20))
-            if (step > 0) addView(label(getString(R.string.setup_step, step), 12f).apply { secondary(0.6f) })
+            // Google TV and Fire TV skip the role step, so their count starts at the service.
+            val skip = if (fireTv() || googleTv()) 1 else 0
+            if (step > 0) addView(label(getString(R.string.setup_step, step - skip, 3 - skip), 12f).apply { secondary(0.6f) })
             addView(label(title, 22f).apply { setTypeface(typeface, Typeface.BOLD); setPadding(0, dp(4), 0, 0) })
             body?.let { addView(label(it, 14f).apply { maxLines = 6; secondary(0.8f); setLineSpacing(0f, 1.15f); setPadding(0, dp(10), 0, 0) }) }
             extra?.let { addView(it) }
@@ -722,8 +810,9 @@ class MainActivity : Activity() {
             0 -> rolePopup()
             1 -> testPopup(1)
             2 -> servicePopup()
-            3 -> adbPopup()
-            4 -> donePopup()
+            3 -> restrictedPopup()
+            4 -> adbPopup()
+            5 -> donePopup()
             else -> setupDialog?.dismiss()
         }
     }
@@ -732,13 +821,20 @@ class MainActivity : Activity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         if (intent.action == UPDATE_STATUS) return installStatus(intent)
+        if (fakeSetup(intent)) return
         if (homeTest != 0 && intent.hasCategory(Intent.CATEGORY_HOME)) { // the Home press reached us: setup works
             homeTest = 0
             return donePopup()
         }
+        val back = returnTo // set when Plume started the app that Home leaves
+        returnTo = null
         if (editing) endEdit()
+        if (movingTop != null) endTopMove(false)
         if (settingsScrim.visibility == View.VISIBLE) closeLauncherSettings()
         if (allApps.visibility == View.VISIBLE) closeAllApps()
+        // Home from an app goes back to the tile or card it was started from, wherever focus is now. If Plume did not start the app,
+        // or the tile or card is gone, Home starts again at the first tile.
+        if (back?.let { homeViewFor(it) }?.requestFocus() == true) return
         watchScroll.scrollTo(0, 0)
         appRow.getChildAt(0)?.requestFocus()
     }
@@ -768,7 +864,7 @@ class MainActivity : Activity() {
         ground = if (dark) DARK_BG else 0xFFF3F5F7.toInt()
         findViewById<View>(R.id.root).setBackgroundColor(ground)
         allApps.setBackgroundColor(ground)
-        for (id in intArrayOf(R.id.clock, R.id.date, R.id.appsTitle, R.id.watchTitle, R.id.allAppsTitle, R.id.rowLabel, R.id.weather)) {
+        for (id in intArrayOf(R.id.clock, R.id.date, R.id.appsTitle, R.id.watchTitle, R.id.allAppsTitle, R.id.rowLabel, R.id.weather, R.id.featured)) {
             findViewById<TextView>(id).setTextColor(fg)
         }
         iconInk = fg
@@ -785,11 +881,11 @@ class MainActivity : Activity() {
     private var watchInk = Color.BLACK
     private var iconInk = Color.BLACK
 
-    private fun topIcons() = listOf(R.id.wifi, R.id.sourcesButton, R.id.allAppsButton, R.id.systemSettings, R.id.launcherSettings)
+    private fun topIcons() = TOP_KEYS.keys.toList()
         .map { findViewById<ImageView>(it) }
 
     private fun fitInk() {
-        val top = listOf(R.id.clock, R.id.date, R.id.weather).map { findViewById<TextView>(it) }
+        val top = listOf(R.id.clock, R.id.date, R.id.weather, R.id.featured).map { findViewById<TextView>(it) }
         val topInk = inkBehind(top)
         for (v in top) ink(v, topInk, fade = true)
         val icons = topIcons()
@@ -859,6 +955,7 @@ class MainActivity : Activity() {
         listOf(plainWallpaper(forDark).let { wallpaperName(it) to it }) +
             BUNDLED_WALLPAPERS.keys.map { wallpaperName("res:$it") to "res:$it" } +
             (wallpaperName(Bing.CHOICE) to Bing.CHOICE) +
+            (wallpaperName(ShowsWall.CHOICE) to ShowsWall.CHOICE) +
             (wallpaperDir()?.listFiles { f -> f.extension.lowercase() in setOf("jpg", "jpeg", "png", "webp") }
                 ?.sortedBy { it.name }?.map { it.nameWithoutExtension to "file:${it.name}" } ?: emptyList()) +
             listOfNotNull(currentWallpaper(forDark).takeIf { it.startsWith("folder:") }?.let { wallpaperName(it) to it })
@@ -871,8 +968,8 @@ class MainActivity : Activity() {
     private fun currentWallpaper(forDark: Boolean = dark) =
         prefs.getString(if (forDark) "wp_dark" else "wp_light", null) ?: defaultWallpaper(forDark)
 
-    /** Glass: the tiles are see-through over a blur of the wallpaper (a setting, off by default). */
-    private fun glassOn() = prefs.getBoolean("glass", false)
+    /** Glass: the tiles are see-through over a blur of the wallpaper (a setting, on by default since 1.6). */
+    private fun glassOn() = prefs.getBoolean("glass", true)
 
     /** Glass needs a picture to blur: with a plain background the tiles stay as they are. */
     private fun glassActive() = glassOn() && !currentWallpaper().startsWith("plain:")
@@ -936,6 +1033,7 @@ class MainActivity : Activity() {
 
     private fun wallpaperName(choice: String) = when {
         choice == Bing.CHOICE -> getString(R.string.bing_daily)
+        choice == ShowsWall.CHOICE -> getString(R.string.shows_wallpaper)
         choice.startsWith("folder:") -> getString(R.string.folder_name, choice.substringAfter(':').substringAfter(':'))
         else -> choice.substringAfter(':').substringBeforeLast('.').let { n -> WALLPAPER_NAMES[n]?.let { getString(it) } ?: n }
     }
@@ -972,6 +1070,7 @@ class MainActivity : Activity() {
                 }
             }
             ui.post {
+                if (isDestroyed) return@post
                 glass.setBlur(blur)
                 glassSurfaces.forEach { it.get()?.setBlur(glass.blur) } // menus and cards that are open, and the panel
                 if (settingsScrim.visibility == View.VISIBLE) showPanelGlass() // a wallpaper picked from the panel itself
@@ -996,6 +1095,7 @@ class MainActivity : Activity() {
         // fitWallpaper's bitmap is mutable: the Bing dim is painted onto it.
         val bmp = when {
             choice == Bing.CHOICE -> fitWallpaper { Bing.file(this).inputStream() }
+            choice == ShowsWall.CHOICE -> fitWallpaper { ShowsWall.file(this).inputStream() }
             choice.startsWith("folder:") -> {
                 val uri = ContentUris.withAppendedId(PHOTOS, folderPhoto(choice) ?: return null)
                 fitWallpaper { contentResolver.openInputStream(uri) ?: throw IOException("gone: $uri") }
@@ -1005,9 +1105,34 @@ class MainActivity : Activity() {
                 fitWallpaper { file.inputStream() }
             }
         } ?: return null
-        // Bing's pictures are often bright daylight, which fights true black: dim them in dark mode.
-        if (dark && choice == Bing.CHOICE) Canvas(bmp).drawColor(Color.argb(DARK_DIM, 0, 0, 0))
+        // Bing's pictures and the shows' are often bright, which fights true black: dim them in dark mode.
+        if (dark && (choice == Bing.CHOICE || choice == ShowsWall.CHOICE)) tonePicture(bmp)
         return bmp
+    }
+
+    /** "wp_dim": "auto" or the percentage of black laid over a picture in dark mode. */
+    private fun wpDim() = prefs.getString("wp_dim", "auto")!!.takeIf { it in DIMS } ?: "auto"
+
+    /**
+     * Brings a Bing or shows picture to a pleasant brightness in dark mode. A fixed strength lays that much black over it.
+     * Auto looks at the picture: a bright one gets black, and a very dark one, which the fades would leave almost
+     * invisible, is lifted a little (the shadows only: lights stay where they are).
+     */
+    private fun tonePicture(bmp: Bitmap) {
+        val d = wpDim()
+        if (d != "auto") {
+            val alpha = d.toInt() * 255 / 100
+            if (alpha > 0) Canvas(bmp).drawColor(Color.argb(alpha, 0, 0, 0))
+            return
+        }
+        val small = Bitmap.createScaledBitmap(bmp, 48, 27, true)
+        val px = IntArray(48 * 27).also { small.getPixels(it, 0, 48, 0, 0, 48, 27) }
+        small.recycle()
+        val mean = Dimming.meanLuma(px)
+        val black = Dimming.autoDim(mean)
+        val lift = Dimming.autoLift(mean)
+        if (black > 0) Canvas(bmp).drawColor(Color.argb(black, 0, 0, 0))
+        if (lift > 0) Canvas(bmp).drawColor(Color.rgb(lift, lift, lift), PorterDuff.Mode.SCREEN)
     }
 
     // ---------- fades over your own photos ----------
@@ -1079,10 +1204,147 @@ class MainActivity : Activity() {
             .remove(photoKey(forDark)).putLong(photoAtKey(forDark), System.currentTimeMillis()).apply()
         Bing.dropIfUnused(applicationContext, prefs) // choosing another wallpaper deletes the Bing picture at once
         if (choice == Bing.CHOICE) Bing.refresh(applicationContext, prefs, force = true)
+        dropShowsIfUnused()
+        if (choice == ShowsWall.CHOICE) {
+            prefs.edit().remove("wp_show_key").putLong("wp_show_at", 0).apply()
+            refreshShows()
+        }
+        updateFeatured()
         if (forDark == dark) loadWallpaper()
     }
 
     private val bingChanged: () -> Unit = { if (currentWallpaper() == Bing.CHOICE) loadWallpaper() }
+
+    // ---------- shows wallpaper (see ShowsWall) ----------
+
+    private fun showKey(p: Prog) = "${p.pkg}/${p.title}/${p.image}"
+
+    /** Watch Next, then every channel an app publishes: (key, channel id or null for Watch Next, name shown). */
+    private fun wpSourceList(): List<Triple<String, Long?, String>> {
+        val label = apps.associate { it.pkg to it.label }
+        fun app(p: String) = label[p] ?: try { packageManager.getApplicationLabel(packageManager.getApplicationInfo(p, 0)).toString() } catch (e: PackageManager.NameNotFoundException) { p }
+        return listOf(Triple(WATCH_NEXT, null as Long?, getString(R.string.watch_next))) +
+            appChannels().distinctBy { (_, p, n) -> channelKey(p, n) }
+                .map { (id, p, n) -> Triple(channelKey(p, n), id as Long?, if (n == app(p) || app(p).isBlank()) n else "${app(p)} · $n") }.sortedBy { it.third.lowercase() }
+    }
+
+    /** Only Watch Next is on to start with; "wp_flip" holds the sources switched from there. */
+    private fun wpSourceOn(key: String) = (key in prefs.getStringSet("wp_flip", emptySet())!!) != (key == WATCH_NEXT)
+
+    private fun programsFor(s: Triple<String, Long?, String>): List<Prog> {
+        val hidden = prefs.getStringSet("hidden_watch", emptySet())!!
+        val id = s.second ?: return readPrograms(TvContract.WatchNextPrograms.CONTENT_URI, hidden).map { it.second }
+        return readPrograms(TvContract.buildPreviewProgramsUriForChannel(id), hidden, "wp$id").map { it.second }
+    }
+
+    private fun pickWpSources(focus: Int = 0) {
+        io.execute {
+            val sources = wpSourceList()
+            val counts = sources.map { s -> try { programsFor(s).let { l -> l.count { it.image != null && it.wide } to l.size } } catch (e: Exception) { 0 to 0 } }
+            ui.post {
+                if (isDestroyed) return@post
+                showPage(getString(R.string.wp_sources), sources.mapIndexed { i, s ->
+                    val state = getString(if (wpSourceOn(s.first)) R.string.on else R.string.off)
+                    page(s.third, "$state · ${getString(R.string.wp_usable, counts[i].first, counts[i].second)}") {
+                        val flip = prefs.getStringSet("wp_flip", emptySet())!!
+                        prefs.edit().putStringSet("wp_flip", if (s.first in flip) flip - s.first else flip + s.first).apply()
+                        pickWpSources(i)
+                    }
+                }, focus) {
+                    prefs.edit().remove("wp_show_key").putLong("wp_show_at", 0).apply()
+                    refreshShows()
+                    renderSettings(R.string.wp_sources)
+                }
+            }
+        }
+    }
+
+    /** Pictures that could not be used, until when they are left alone: a dead address or a picture that is not wide for hours, a failed network for minutes. */
+    private val showFailed = HashMap<String, Long>() // the io thread only
+
+    /**
+     * Takes the next show's picture from the sources that are on: the first one, after the last shown, that is wide
+     * enough and can be fetched. A picture that cannot is left alone for a while and the next one is tried, along the
+     * whole list (a run of shows without a picture must not hold the wallpaper). After three network failures in a row
+     * it stops until the next time: the network is probably down.
+     */
+    private fun refreshShows() {
+        if (checkSelfPermission(TV_LISTINGS) != PackageManager.PERMISSION_GRANTED) return
+        io.execute {
+            val list = try {
+                wpSourceList().filter { wpSourceOn(it.first) }.flatMap { programsFor(it) }.filter { it.image != null && it.wide }.distinctBy { showKey(it) }
+            } catch (e: Exception) {
+                emptyList()
+            }
+            val byKey = list.associateBy { showKey(it) }
+            val now = System.currentTimeMillis()
+            var chosen: Prog? = null
+            var network = 0
+            for (k in ShowsWall.order(byKey.keys.toList(), prefs.getString("wp_show_key", null))) {
+                if (ShowsWall.skipped(showFailed, k, now)) continue
+                val p = byKey[k] ?: continue
+                when (fetchShow(p)) {
+                    FETCH_OK -> { chosen = p; break }
+                    FETCH_DEAD -> showFailed[k] = now + ShowsWall.DEAD_MS
+                    else -> {
+                        showFailed[k] = now + ShowsWall.NETWORK_MS
+                        if (++network >= 3) break
+                    }
+                }
+            }
+            val edit = prefs.edit().putLong("wp_show_at", System.currentTimeMillis())
+            if (chosen != null) {
+                edit.putString("wp_show_key", showKey(chosen)).putString("wp_show_title", chosen.title)
+            }
+            edit.apply()
+            ui.post {
+                if (isDestroyed) return@post
+                if (chosen != null && currentWallpaper() == ShowsWall.CHOICE) loadWallpaper()
+                updateFeatured()
+            }
+        }
+    }
+
+    /** [FETCH_OK] when the picture is on disk now, [FETCH_DEAD] when it will never do (not found, not wide, too big), [FETCH_NETWORK] when it failed this time. */
+    private fun fetchShow(p: Prog): Int = try {
+        val bytes = openStream(p.image!!).use { input -> // stops just past SHOW_MAX: a bigger picture is not read into memory
+            val out = java.io.ByteArrayOutputStream()
+            val buf = ByteArray(64 * 1024)
+            while (out.size() <= SHOW_MAX) { val n = input.read(buf); if (n < 0) break; out.write(buf, 0, n) }
+            out.toByteArray()
+        }
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        if (bytes.size > SHOW_MAX || !ShowsWall.fits(bounds.outWidth, bounds.outHeight)) {
+            FETCH_DEAD
+        } else {
+            val part = File(filesDir, "shows.part")
+            part.writeBytes(bytes)
+            if (part.renameTo(ShowsWall.file(this))) FETCH_OK else { part.delete(); FETCH_NETWORK }
+        }
+    } catch (e: java.io.FileNotFoundException) {
+        FETCH_DEAD
+    } catch (e: Exception) {
+        FETCH_NETWORK
+    }
+
+    /** No wallpaper uses the shows any more: the picture and what Plume remembers about it go, at once. */
+    private fun dropShowsIfUnused() {
+        if (currentWallpaper(false) == ShowsWall.CHOICE || currentWallpaper(true) == ShowsWall.CHOICE) return
+        ShowsWall.file(this).delete()
+        prefs.edit().remove("wp_show_key").remove("wp_show_at").remove("wp_show_title").apply()
+    }
+
+    /** The show on screen as the wallpaper, or null when another wallpaper is on or no picture was found yet. */
+    private fun featuredTitle() = prefs.getString("wp_show_title", null)?.takeIf { currentWallpaper() == ShowsWall.CHOICE && ShowsWall.file(this).exists() }
+
+    /** "Featured: …" under the weather: the show whose picture is the wallpaper. */
+    private fun updateFeatured() {
+        val title = featuredTitle()
+        val v = findViewById<TextView>(R.id.featured)
+        v.text = title?.let { getString(R.string.featured_now, it) }.orEmpty()
+        v.visibility = if (title == null) View.GONE else View.VISIBLE
+    }
 
     // ---------- folder wallpapers ----------
 
@@ -1178,9 +1440,10 @@ class MainActivity : Activity() {
     private val wallpaperTick = object : Runnable {
         override fun run() {
             val every = photoEvery() * 60_000L
-            if (!currentWallpaper().startsWith("folder:")) return
-            val wait = prefs.getLong(photoAtKey(), 0) + every - System.currentTimeMillis()
-            if (wait <= 0) nextPhoto()
+            val shows = currentWallpaper() == ShowsWall.CHOICE
+            if (!shows && !currentWallpaper().startsWith("folder:")) return
+            val wait = prefs.getLong(if (shows) "wp_show_at" else photoAtKey(), 0) + every - System.currentTimeMillis()
+            if (wait <= 0) { if (shows) refreshShows() else nextPhoto() }
             ui.postDelayed(this, if (wait <= 0) every else wait)
         }
     }
@@ -1268,6 +1531,7 @@ class MainActivity : Activity() {
             UploadServer((1000..9999).random().toString(), File(cacheDir, "upload.tmp")) { file ->
                 val saved = importWallpaper(file, dir) ?: return@UploadServer null
                 ui.post {
+                    if (isDestroyed) return@post
                     setWallpaper(forDark, "file:${saved.name}")
                     status.text = getString(R.string.photo_added, saved.nameWithoutExtension)
                 }
@@ -1412,6 +1676,11 @@ class MainActivity : Activity() {
                 renderApps()
                 renderSettings(R.string.app_names)
             },
+            R.string.wp_dim to { d ->
+                prefs.edit().putString("wp_dim", DIMS.keys.toList().step(wpDim(), d)).apply()
+                loadWallpaper()
+                renderSettings(R.string.wp_dim)
+            },
             R.string.show_row to { d ->
                 prefs.edit().putString("row_show", ROW_SHOW.keys.toList().step(rowShow(), d)).apply()
                 placeRow(animate = false)
@@ -1443,7 +1712,14 @@ class MainActivity : Activity() {
             // Select steps up like Right, and past 100% starts again at 0%.
             R.string.fade_top to Triple(getString(R.string.fade_top), "$SLIDER${fade("fade_top")}") { steps[R.string.fade_top]!!(if (fade("fade_top") == 100) -100 / FADE_STEP else 1) },
             R.string.fade_bottom to Triple(getString(R.string.fade_bottom), "$SLIDER${fade("fade_bottom")}") { steps[R.string.fade_bottom]!!(if (fade("fade_bottom") == 100) -100 / FADE_STEP else 1) },
+            R.string.app_animations to Triple(getString(R.string.app_animations), toggle(animationsOn())) {
+                prefs.edit().putBoolean("app_anim", !animationsOn()).apply()
+                renderSettings(R.string.app_animations)
+            },
+            R.string.wp_dim to Triple(getString(R.string.wp_dim), getString(DIMS.getValue(wpDim()))) { steps[R.string.wp_dim]!!(1) },
             R.string.folder_photo_changes to Triple(getString(R.string.folder_photo_changes), getString(PHOTO_EVERY[photoEvery()]!!)) { pickPhotoEvery() },
+            R.string.wp_sources to Triple(getString(R.string.wp_sources), // the count queries the channels: only when the Shows wallpaper is on, so the settings do not wait for it
+                if (ShowsWall.CHOICE in listOf(currentWallpaper(false), currentWallpaper(true))) getString(R.string.n_on, wpSourceList().count { wpSourceOn(it.first) }) else "") { pickWpSources() },
             R.string.sort_apps to Triple(getString(R.string.sort_apps), if (sort == "manual") getString(R.string.manual) else getString(R.string.most_used)) {
                 prefs.edit().putString("sort", if (sort == "manual") "usage" else "manual").apply()
                 renderApps()
@@ -1532,12 +1808,14 @@ class MainActivity : Activity() {
         val walls = listOf(currentWallpaper(false), currentWallpaper(true))
         val photo = walls.any { !it.startsWith("res:") && !it.startsWith("plain:") }
         val folder = walls.any { it.startsWith("folder:") }
+        val shows = walls.any { it == ShowsWall.CHOICE }
+        val dimmed = currentWallpaper(true).let { it == Bing.CHOICE || it == ShowsWall.CHOICE } // the darkening is for the dark Bing or shows picture only
         // In the order things sit on the home screen, top to bottom, then what isn't on it.
         val sections = listOf(
             Triple(R.string.section_appearance, "${rows[R.string.theme]!!.second} · ${wallpaperName(currentWallpaper(dark))}",
-                listOfNotNull(R.string.theme, R.string.light_wallpaper, R.string.dark_wallpaper, R.string.fade_top.takeIf { photo },
-                    R.string.fade_bottom.takeIf { photo }, R.string.glass,
-                    R.string.folder_photo_changes.takeIf { folder })),
+                listOfNotNull(R.string.theme, R.string.light_wallpaper, R.string.dark_wallpaper, R.string.wp_dim.takeIf { dimmed }, R.string.fade_top.takeIf { photo },
+                    R.string.fade_bottom.takeIf { photo }, R.string.glass, R.string.app_animations,
+                    R.string.folder_photo_changes.takeIf { folder || shows }, R.string.wp_sources.takeIf { shows })),
             Triple(R.string.section_clock_weather, if (weather == "off") on(false) else "${rows[R.string.weather_units]!!.second} · ${rows[R.string.weather_location]!!.second}",
                 listOf(R.string.weather, R.string.weather_units, R.string.weather_location)),
             Triple(R.string.section_app_row, "${rows[R.string.apps_in_row]!!.second} · ${rows[R.string.row_position]!!.second}",
@@ -1589,7 +1867,7 @@ class MainActivity : Activity() {
             }
         }
         // Until Home opens Plume one way or the other, a card on top leads to the setup; not after Home was turned off on purpose.
-        val top = listOfNotNull(if (homeServiceOn() || isDefaultHome() || prefs.getBoolean("home_off", false)) null
+        val top = listOfNotNull(if (homeSetUp() || prefs.getBoolean("home_off", false)) null
                 else Triple(R.string.finish_setup, page(getString(R.string.finish_setup), "›") { closeLauncherSettings(); startHomeSetup() },
                     RowStyle(R.drawable.ic_home, getString(R.string.finish_setup_value), help = getString(R.string.help_finish_setup)))) +
             sections.map { (key, value, keys) ->
@@ -1599,7 +1877,13 @@ class MainActivity : Activity() {
                 RowStyle(R.drawable.ic_update, rows[R.string.updates]!!.second, help = getString(R.string.help_updates))) +
             listOfNotNull(if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0) null
                 else Triple(R.string.preview_home_setup, page(getString(R.string.preview_home_setup)) { closeLauncherSettings(); previewHomeSetup() }, null))
-        showPage(getString(R.string.plume_settings), top.map { it.second }, maxOf(0, top.indexOfFirst { it.first == at }), styles = top.map { it.third }, back = null)
+        val hint = label(getString(R.string.top_bar_hint), 13f).apply {
+            secondary(0.6f)
+            isSingleLine = false // it wraps onto a second line rather than being cut
+            maxLines = 2
+            setPadding(dp(14), dp(2), dp(14), dp(8))
+        }
+        showPage(getString(R.string.plume_settings), top.map { it.second }, maxOf(0, top.indexOfFirst { it.first == at }), top = hint, styles = top.map { it.third }, back = null)
     }
 
     private var lastSettings = 0 // section used last, focused when settings open again
@@ -2010,6 +2294,7 @@ class MainActivity : Activity() {
                 null
             }
             if (bmp != null) ui.post {
+                if (isDestroyed) return@post
                 scaleType = ImageView.ScaleType.CENTER_CROP
                 setPadding(0, 0, 0, 0)
                 clearColorFilter()
@@ -2081,12 +2366,13 @@ class MainActivity : Activity() {
             }
             val inputs = hdmiInputs()
             ui.post {
+                if (isDestroyed) return@post
                 if (inputs.isNotEmpty() && !prefs.getBoolean("inputs_moved", false)) moveInputsToSources(inputs)
                 apps = list
                 APPS = list
                 sources = inputs
                 SOURCES = inputs
-                findViewById<View>(R.id.sourcesButton).visibility = if (inputs.isEmpty()) View.GONE else View.VISIBLE
+                if (movingTop == null) applyTopBar() // Sources shows only while the TV has an input
                 renderApps()
             }
         }
@@ -2286,12 +2572,27 @@ class MainActivity : Activity() {
             scaleType = ImageView.ScaleType.FIT_XY
             if (grey) { colorFilter = GREYSCALE; alpha = rest }
         }
+        // A colour banner has nothing else to tell the selected tile from the others: the rest are dimmed a little,
+        // and the selected one gets a ring in the text colour. Both fade over the same 160 ms as the lift.
+        val dim = View(this).apply { setBackgroundColor(Color.BLACK); alpha = if (grey) 0f else BANNER_DIM }
+        val ring = View(this).apply {
+            background = GradientDrawable().apply {
+                cornerRadius = dp(8).toFloat()
+                setStroke(dp(3), fg)
+                setColor(Color.TRANSPARENT)
+            }
+            alpha = 0f
+        }
         val col = FrameLayout(this).apply {
             addView(pic, MATCH_PARENT, MATCH_PARENT)
+            addView(dim, MATCH_PARENT, MATCH_PARENT)
+            addView(ring, MATCH_PARENT, MATCH_PARENT)
             tag = a.pkg
             setOnClickListener { launch(a) }
         }
-        style(col, dp(8), card = false) { focused ->
+        style(col, dp(8), card = false, lift = 1.12f) { focused ->
+            ring.animate().alpha(if (focused) 1f else 0f).setDuration(160).start()
+            if (!grey) dim.animate().alpha(if (focused) 0f else BANNER_DIM).setDuration(160).start()
             if (!grey) return@style
             pic.colorFilter = if (focused) null else GREYSCALE
             pic.animate().alpha(if (focused) 1f else rest).setDuration(160).start()
@@ -2546,6 +2847,7 @@ class MainActivity : Activity() {
         }
         val confirm = e.keyCode == KeyEvent.KEYCODE_DPAD_CENTER || e.keyCode == KeyEvent.KEYCODE_ENTER ||
             e.keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER
+        if (movingTop != null && topMoveKey(e, confirm)) return true
         if (confirm) {
             if (e.action == KeyEvent.ACTION_DOWN && e.repeatCount == 0) holdFired = false
             if (e.action == KeyEvent.ACTION_DOWN && e.repeatCount > 0) {
@@ -2589,8 +2891,8 @@ class MainActivity : Activity() {
             v.parent === wifi.parent -> when (key) { // top bar
                 KeyEvent.KEYCODE_DPAD_DOWN -> apps ?: cards ?: v // the apps row can be empty (all hidden)
                 KeyEvent.KEYCODE_DPAD_UP -> v
-                KeyEvent.KEYCODE_DPAD_LEFT -> if (v.id == R.id.wifi) v else null
-                KeyEvent.KEYCODE_DPAD_RIGHT -> if (v.id == R.id.launcherSettings) v else null
+                KeyEvent.KEYCODE_DPAD_LEFT -> if (v.id == shownTop().first()) v else null
+                KeyEvent.KEYCODE_DPAD_RIGHT -> if (v.id == shownTop().last()) v else null
                 else -> null
             }
             v.parent === appRow -> {
@@ -2640,6 +2942,7 @@ class MainActivity : Activity() {
                 closeAllApps()
                 appRow.getChildAt(0)?.requestFocus() // show the app just pinned
             }
+            v.parent === wifi.parent -> topMenu(v)
             v.parent === appRow -> appMenu(v)
             v.getTag(R.id.watchRow) is Prog -> watchMenu(v, v.getTag(R.id.watchRow) as Prog)
         }
@@ -2734,8 +3037,145 @@ class MainActivity : Activity() {
         list.getChildAt(0).requestFocus()
     }
 
-    private fun holdMenu(anchor: View, items: List<Pair<String, () -> Unit>>) =
-        popupMenu(anchor) { dismiss -> items.map { (name, action) -> settingsRow(name, "") { dismiss(); action() } } }
+    private fun holdMenu(anchor: View, items: List<Pair<String, () -> Unit>>, below: Boolean = false) =
+        popupMenu(anchor, below) { dismiss -> items.map { (name, action) -> settingsRow(name, "") { dismiss(); action() } } }
+
+    // ---------- the top bar: hold OK on an icon to move it, hide it, or add one back ----------
+
+    /** The bar's icons in their default order, with the key each is saved under. */
+    private val TOP_KEYS = linkedMapOf(R.id.wifi to "wifi", R.id.sourcesButton to "sources", R.id.allAppsButton to "apps",
+        R.id.systemSettings to "system", R.id.launcherSettings to "plume")
+
+    private var movingTop: View? = null // the icon being moved, while Left and Right slide it
+    private var topLive: List<Int> = emptyList() // the order while moving; saved when OK places the icon
+    private var topBefore: List<Int> = emptyList() // the order when the move started, for Back
+
+    /** The icons the bar shows, in order: the saved list, or all of them. Plume settings is always on it. */
+    private fun topOrder(): List<Int> =
+        TopBar.parse(prefs.getString("top_bar", null), TOP_KEYS.values.toList(), TOP_KEYS.values.toList(), "plume").map { key -> TOP_KEYS.entries.first { it.value == key }.key }
+
+    /** What is really on screen: Sources stays out while the TV has no input. */
+    private fun shownTop(order: List<Int> = topOrder()) = order.filter { it != R.id.sourcesButton || sources.isNotEmpty() }
+
+    /** Puts the icons in [order], hides the others, and gives the first one on screen no left margin. */
+    private fun applyTopBar(order: List<Int> = topOrder()) {
+        val bar = wifi.parent as LinearLayout
+        // Found before they leave the bar: findViewById cannot see a view that has been removed.
+        val views = TOP_KEYS.keys.associateWith { findViewById<View>(it) }
+        val start = views.values.minOf { bar.indexOfChild(it) }
+        views.values.forEach { bar.removeView(it) }
+        val shown = shownTop(order)
+        (order + (TOP_KEYS.keys - order.toSet())).forEachIndexed { i, id ->
+            val v = views.getValue(id)
+            val lp = v.layoutParams as LinearLayout.LayoutParams
+            lp.marginStart = if (id == shown.firstOrNull()) 0 else dp(8)
+            v.visibility = if (id in shown) View.VISIBLE else View.GONE
+            bar.addView(v, start + i, lp)
+        }
+    }
+
+    private fun saveTopOrder(order: List<Int>) {
+        prefs.edit().putString("top_bar", order.joinToString(",") { TOP_KEYS.getValue(it) }).apply()
+    }
+
+    private fun keyList(ids: List<Int>) = ids.map { TOP_KEYS.getValue(it) }
+
+    private fun keys(list: List<String>) = list.map { key -> TOP_KEYS.entries.first { it.value == key }.key }
+
+    /** Hold OK on a top-bar icon: Move, Hide (not Plume settings, so the bar is never empty) and Add icon. */
+    private fun topMenu(v: View) {
+        if (locked()) return holdMenu(v, listOf(getString(R.string.unlock_to_edit) to { unlock { v.requestFocus(); topMenu(v) } }), below = true)
+        val hidden = TOP_KEYS.keys - topOrder().toSet()
+        holdMenu(v, listOfNotNull(
+            getString(R.string.move) to { startTopMove(v) },
+            if (v.id == R.id.launcherSettings) null else getString(R.string.hide) to { hideTop(v) },
+            if (hidden.isEmpty()) null else getString(R.string.add_icon) to { addIconMenu(v) },
+        ), below = true)
+    }
+
+    private fun hideTop(v: View) {
+        val order = topOrder()
+        val shown = shownTop(order)
+        val next = shown.getOrNull(shown.indexOf(v.id) + 1) ?: shown.getOrNull(shown.indexOf(v.id) - 1)
+        val left = order - v.id
+        saveTopOrder(left)
+        applyTopBar(left)
+        next?.let { findViewById<View>(it).requestFocus() }
+        Toast.makeText(this, getString(R.string.icon_hidden), Toast.LENGTH_LONG).show()
+    }
+
+    /** The hidden icons, with their pictures. Picking one puts it next to [anchor] and goes straight into Move. */
+    private fun addIconMenu(anchor: View) {
+        val hidden = TOP_KEYS.keys.filter { it !in topOrder() }
+        popupMenu(anchor, below = true) { dismiss ->
+            hidden.map { id ->
+                val icon = findViewById<ImageView>(id)
+                val note = if (id == R.id.sourcesButton && sources.isEmpty()) getString(R.string.shows_with_input) else ""
+                settingsRow(icon.contentDescription.toString(), note) { dismiss(); addTopIcon(id, anchor) }.also { row ->
+                    (row as LinearLayout).addView(ImageView(this).apply {
+                        setImageDrawable(icon.drawable.constantState?.newDrawable(resources)?.mutate() ?: icon.drawable)
+                        setColorFilter(if (dark) DARK_TEXT_2 else fg)
+                    }, 0, LinearLayout.LayoutParams(dp(20), dp(20)).apply { marginEnd = dp(12) })
+                }
+            }
+        }
+    }
+
+    private fun addTopIcon(id: Int, after: View) {
+        topBefore = topOrder()
+        topLive = keys(TopBar.addAfter(keyList(topBefore), TOP_KEYS.getValue(id), TOP_KEYS.getValue(after.id)))
+        applyTopBar(topLive)
+        if (id !in shownTop(topLive)) { // Sources on a TV with no input: nothing on screen to move, so keep it where it goes
+            saveTopOrder(topLive)
+            after.requestFocus()
+            return
+        }
+        beginTopMove(findViewById(id))
+    }
+
+    private fun startTopMove(v: View) {
+        topBefore = topOrder()
+        topLive = topBefore
+        beginTopMove(v)
+    }
+
+    private fun beginTopMove(v: View) {
+        movingTop = v
+        appsTitle.text = getString(R.string.moving_hint)
+        appsTitle.visibility = View.VISIBLE
+        v.alpha = 0.6f
+        v.requestFocus()
+    }
+
+    /** OK places the icon, Back puts everything as it was; Left and Right slide the icon past the ones on screen. */
+    private fun endTopMove(save: Boolean) {
+        val v = movingTop ?: return
+        movingTop = null
+        v.alpha = 1f
+        appsTitle.visibility = View.GONE
+        if (save) saveTopOrder(topLive) else applyTopBar(topBefore)
+        (if (v.visibility == View.VISIBLE) v else findViewById(shownTop().first())).requestFocus() // an added icon is gone again after Back
+    }
+
+    private fun topMoveKey(e: KeyEvent, confirm: Boolean): Boolean {
+        val v = movingTop ?: return false
+        when {
+            e.keyCode == KeyEvent.KEYCODE_BACK -> if (e.action == KeyEvent.ACTION_UP) endTopMove(false)
+            confirm -> if (e.action == KeyEvent.ACTION_UP) endTopMove(true)
+            e.keyCode == KeyEvent.KEYCODE_DPAD_LEFT || e.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT -> if (e.action == KeyEvent.ACTION_DOWN) {
+                val order = keys(TopBar.slide(keyList(topLive), keyList(shownTop(topLive)), TOP_KEYS.getValue(v.id),
+                    if (e.keyCode == KeyEvent.KEYCODE_DPAD_LEFT) -1 else 1))
+                if (order != topLive) {
+                    topLive = order
+                    applyTopBar(order) // the view leaves the bar and comes back: take focus again
+                    v.requestFocus()
+                }
+            }
+            e.keyCode == KeyEvent.KEYCODE_DPAD_UP || e.keyCode == KeyEvent.KEYCODE_DPAD_DOWN -> {} // the icon stays in the bar
+            else -> return false
+        }
+        return true
+    }
 
     /** The TV's inputs under the Sources icon, as on any TV: the logo of what is plugged in, its name, no signal if none. */
     private fun showSources(anchor: View) {
@@ -2861,11 +3301,66 @@ class MainActivity : Activity() {
     private fun launch(a: App) {
         prefs.edit().putInt("n_" + a.pkg, prefs.getInt("n_" + a.pkg, 0) + 1).putLong("t_" + a.pkg, System.currentTimeMillis()).apply()
         if (prefs.getString("sort", "manual") == "usage") appsDirty = true
+        val from = currentFocus?.takeIf { it.tag == a.pkg } // the tile that was pressed, not one a remote key opened it from
         try {
-            startActivity(a.launch)
+            if (a.pkg.startsWith(HDMI)) {
+                Remap.openInput(this, a.pkg.removePrefix(HDMI))
+                returnTo = focusKey(from)
+            } else startApp(a.launch, from)
         } catch (e: Exception) {
-            packageManager.getLeanbackLaunchIntentForPackage(a.pkg)?.let { startActivity(it) }
+            packageManager.getLeanbackLaunchIntentForPackage(a.pkg)?.let { startApp(it, from) }
         }
+    }
+
+    private fun animationsOn() = prefs.getBoolean("app_anim", true)
+
+    private var openedFrom: WeakReference<View>? = null // the tile or card an app was opened from, until we come back
+
+    /** Starts an app. With [from] and the animations on, the app opens out of that tile and the row settles on return. */
+    private fun startApp(intent: Intent, from: View?) {
+        val source = from?.takeIf { animationsOn() && it.isAttachedToWindow && it.width > 0 }
+        val options = source?.let { ActivityOptions.makeScaleUpAnimation(it, 0, 0, it.width, it.height).toBundle() }
+        startActivity(intent, options)
+        openedFrom = source?.let { WeakReference(it) }
+        returnTo = focusKey(from)
+    }
+
+    /** What Home goes back to: the pressed tile's package or the pressed card's [cardKey], and null for an app that Plume did not start. */
+    private var returnTo: String? = null
+
+    private fun cardKey(p: Prog) = "card|${p.title}|${p.pkg}|${p.intent}"
+
+    private fun focusKey(v: View?): String? = (v?.getTag(R.id.watchRow) as? Prog)?.let { cardKey(it) } ?: v?.tag as? String
+
+    /** The tile or card that [key] names, with the cards built up to it; null when it left the rows (uninstalled, hidden, off the list). */
+    private fun homeViewFor(key: String): View? {
+        (0 until appRow.childCount).map { appRow.getChildAt(it) }.firstOrNull { it.tag == key }?.let { return it }
+        val at = watchList.indexOfFirst { cardKey(it) == key }
+        if (at < 0) return null
+        addCardsTo(at)
+        return (watchRow.getChildAt(at) as? ViewGroup)?.getChildAt(0)
+    }
+
+    /**
+     * Back from an app: the row of the tile it came from settles in, a little larger and dimmer at first. It settles
+     * around that tile when it is on screen, and around the middle of the row's window when Home has moved the row.
+     */
+    private fun settleRow(tile: View) {
+        // A Continue watching card sits in a column of its own: the row is the one that holds the columns.
+        val row = (if (tile.getTag(R.id.watchRow) is Prog) watchRow else tile.parent) as? ViewGroup ?: return
+        row.animate().cancel()
+        val at = Rect(0, 0, tile.width, tile.height)
+        row.offsetDescendantRectToMyCoords(tile, at) // the tile's place in the row, whatever sits between them
+        var pivot = at.exactCenterX()
+        val scroll = generateSequence(row.parent) { it.parent }.firstOrNull { it is HorizontalScrollView } as? HorizontalScrollView
+        if (scroll != null && (at.left < scroll.scrollX || at.right > scroll.scrollX + scroll.width)) pivot = scroll.scrollX + scroll.width / 2f
+        row.pivotX = pivot
+        row.pivotY = at.exactCenterY()
+        row.scaleX = 1.12f
+        row.scaleY = 1.12f
+        row.alpha = 0.4f
+        // A moment late: the app's own window is still fading out over us for the first part.
+        row.animate().scaleX(1f).scaleY(1f).alpha(1f).setStartDelay(90).setDuration(420).setInterpolator(DECELERATE).start()
     }
 
     // ---------- all apps ----------
@@ -2996,6 +3491,7 @@ class MainActivity : Activity() {
                 false
             }
             ui.post {
+                if (isDestroyed) return@post
                 downloading = false
                 if (ok) then() else toast(getString(R.string.paintings_failed), long = true)
                 if (settingsScrim.visibility == View.VISIBLE) renderSettings(R.string.screensaver)
@@ -3037,6 +3533,7 @@ class MainActivity : Activity() {
             }
             if (latest != null) prefs.edit().putString("upd_ver", latest).putLong("upd_time", System.currentTimeMillis()).apply()
             ui.post {
+                if (isDestroyed) return@post
                 checking = false
                 val ver = availableUpdate()
                 if (ver != null && (force || prefs.getString("upd_told", null) != ver)) {
@@ -3062,8 +3559,15 @@ class MainActivity : Activity() {
         ), back = { renderSettings(R.string.updates) })
         // Focusable, lit on focus, so Down walks through notes longer than the panel and it scrolls along.
         getString(R.string.whats_new).split('\n').forEach {
+            if (it.startsWith("#")) {
+                settingsList.addView(label(it.substring(1), 13f).apply {
+                    setTypeface(typeface, Typeface.BOLD)
+                    setPadding(dp(14), dp(18), dp(14), dp(2))
+                })
+                return@forEach
+            }
             settingsList.addView(label("", 13f).apply {
-                text = SpannableString(it).apply { setSpan(BulletSpan(dp(10), fg), 0, it.length, 0) }
+                text = noteText(it)
                 maxLines = Int.MAX_VALUE
                 ellipsize = null
                 alpha = 0.7f
@@ -3074,6 +3578,19 @@ class MainActivity : Activity() {
         }
         settingsList.getChildAt(0).nextFocusDownId = View.NO_ID // showPage stops Down at its last row
         settingsList.getChildAt(settingsList.childCount - 1).let { it.id = View.generateViewId(); it.nextFocusDownId = it.id }
+    }
+
+    /** A What's new entry with a bullet, its **marked** words bold and the marks removed. */
+    private fun noteText(entry: String): SpannableString {
+        val parts = entry.split("**")
+        val s = SpannableString(parts.joinToString(""))
+        var at = 0
+        parts.forEachIndexed { i, part ->
+            if (i % 2 == 1) s.setSpan(StyleSpan(Typeface.BOLD), at, at + part.length, 0)
+            at += part.length
+        }
+        s.setSpan(BulletSpan(dp(10), fg), 0, s.length, 0)
+        return s
     }
 
     /** Notes the user hasn't opened since updating. A fresh install has nothing new to tell. */
@@ -3133,6 +3650,7 @@ class MainActivity : Activity() {
                 false
             }
             ui.post {
+                if (isDestroyed) return@post
                 if (!ok) {
                     updating = false
                     toast(getString(R.string.update_download_failed), long = true)
@@ -3193,7 +3711,7 @@ class MainActivity : Activity() {
                     .putFloat("wx_temp", now.getDouble("temperature_2m").toFloat())
                     .putInt("wx_code", now.getInt("weather_code"))
                     .putLong("wx_time", System.currentTimeMillis()).apply()
-                ui.post { showWeather() }
+                ui.post { if (!isDestroyed) showWeather() }
             } catch (e: Exception) {
                 android.util.Log.w("TvHome", "weather failed ($e)") // keep the last reading; next tick retries
             }
@@ -3278,6 +3796,7 @@ class MainActivity : Activity() {
                 null
             }
             ui.post {
+                if (isDestroyed) return@post
                 // Only if the page is still open: Back may have left it while the search ran.
                 if (settingsScrim.visibility != View.VISIBLE || findViewById<TextView>(R.id.settingsTitle).text.toString() != getString(R.string.weather_location)) return@post
                 when {
@@ -3332,7 +3851,7 @@ class MainActivity : Activity() {
             } catch (e: Exception) {
                 emptyList()
             }
-            ui.post { showWatchNext(list) }
+            ui.post { if (!isDestroyed) showWatchNext(list) }
         }
     }
 
@@ -3341,8 +3860,8 @@ class MainActivity : Activity() {
      * 1. The system Watch Next list (Netflix etc.), newest engagement first.
      * 2. Apps' own home-screen channels the user switched on (see [channelOn]); ones named "Continue Watching"
      *    are on to start with. Stremio publishes one (with progress and an autoPlay resume link) instead of
-     *    using Watch Next, so signing in to Stremio on the TV is all it takes. Channel rows carry no timestamps,
-     *    so they use the time the app was last opened from Plume, keeping the app's own order among themselves.
+     *    using Watch Next, so signing in to Stremio on the TV is all it takes. Channel rows sort by their own
+     *    last-watched time when the app sets one, else by the time the app was last opened from Plume, see [channelSortKey].
      * Newest first across apps, each app's [PER_APP] newest ahead of the rest, so one app with ten shows can't bury the others.
      */
     private fun queryWatchNext(): List<Prog> {
@@ -3353,7 +3872,7 @@ class MainActivity : Activity() {
         autoRowName = if (watchNextOn) null
             else on.map { it.third }.distinct().singleOrNull()?.takeUnless { it.equals("Continue Watching", ignoreCase = true) }
         val channels = on.flatMap { (id) ->
-            readPrograms(TvContract.buildPreviewProgramsUriForChannel(id), hidden, "ch$id").map { (_, p) -> watchSortKey(0, prefs.getLong("t_${p.pkg}", 0)) to p }
+            readPrograms(TvContract.buildPreviewProgramsUriForChannel(id), hidden, "ch$id")
         }
         val all = watchNext + channels
         publishingPkgs = all.mapNotNull { it.second.pkg }.toSet()
@@ -3454,9 +3973,9 @@ class MainActivity : Activity() {
         }
     }
 
-    /** Pairs of (sort key, item), see [watchSortKey]; channel rows have no time of their own and get the type "continue". */
+    /** Pairs of (sort key, item), see [watchSortKey]; a [group] is a channel, its rows sorted by [channelSortKey] and [byWeight]. */
     private fun readPrograms(uri: Uri, hidden: Set<String>, group: String? = null): List<Pair<Long, Prog>> {
-        val out = ArrayList<Pair<Long, Prog>>()
+        val out = ArrayList<Triple<Long, Long, Prog>>()
         contentResolver.query(uri, null, null, null, null)?.use { c ->
             fun str(col: String) = c.getColumnIndex(col).let { if (it < 0 || c.isNull(it)) null else c.getString(it) }
             fun num(col: String) = c.getColumnIndex(col).let { if (it < 0 || c.isNull(it)) 0L else c.getLong(it) }
@@ -3475,11 +3994,14 @@ class MainActivity : Activity() {
                 ).joinToString(" - ")
                 val progress = if (duration > 0 && position >= 1000) (position * 100 / duration).toInt().coerceIn(0, 100) else 0
                 val pkg = str("package_name")
-                val prog = Prog(title, sub, progress, str("thumbnail_uri") ?: str("poster_art_uri"), str("intent_uri"), pkg, group ?: pkg)
-                out += watchSortKey(num("watch_next_type"), num("last_engagement_time_utc_millis")) to prog
+                val wide = ShowsWall.wide(str("thumbnail_uri") != null, num("poster_art_aspect_ratio").toInt())
+                val prog = Prog(title, sub, progress, str("thumbnail_uri") ?: str("poster_art_uri"), str("intent_uri"), pkg, group ?: pkg, wide)
+                val engaged = num("last_engagement_time_utc_millis")
+                out += Triple(num("weight"),
+                    if (group == null) watchSortKey(num("watch_next_type"), engaged) else channelSortKey(engaged, prefs.getLong("t_$pkg", 0)), prog)
             }
         }
-        return out
+        return byWeight(out)
     }
 
     private fun hideKey(pkg: String?, title: String) = "$pkg/$title"
@@ -3526,6 +4048,7 @@ class MainActivity : Activity() {
         watchKey = key
         watchList = list
         val focusedAt = watchRow.indexOfChild(currentFocus?.parent as? View)
+        val focusedKey = (currentFocus?.getTag(R.id.watchRow) as? Prog)?.let { cardKey(it) } // the same show, whatever place it has now
         watchRow.removeAllViews()
         watchTitle.text = rowName()
         placeRow(animate = false)
@@ -3534,8 +4057,9 @@ class MainActivity : Activity() {
         watchRow.post { fitInk() }
         ui.post { if (watchKey == key) addCardsTo(CARDS_AHEAD - 1) } // unless a newer list replaced this one
         if (focusedAt >= 0) {
-            ((watchRow.getChildAt(focusedAt.coerceAtMost(watchRow.childCount - 1)) as? LinearLayout)?.getChildAt(0)
-                ?: appRow.getChildAt(0))?.requestFocus()
+            val at = watchList.indexOfFirst { cardKey(it) == focusedKey }.takeIf { it >= 0 } ?: focusedAt.coerceAtMost(watchList.size - 1)
+            addCardsTo(at) // the card may be past the first ones that are built
+            ((watchRow.getChildAt(at) as? LinearLayout)?.getChildAt(0) ?: appRow.getChildAt(0))?.requestFocus()
         }
     }
 
@@ -3672,10 +4196,11 @@ class MainActivity : Activity() {
 
     private fun open(p: Prog) {
         prefs.edit().putLong("t_${p.pkg}", System.currentTimeMillis()).apply()
+        val from = currentFocus?.takeIf { it.getTag(R.id.watchRow) is Prog }
         try {
-            startActivity(Intent.parseUri(p.intent, Intent.URI_INTENT_SCHEME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            startApp(Intent.parseUri(p.intent, Intent.URI_INTENT_SCHEME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), from)
         } catch (e: Exception) {
-            p.pkg?.let { packageManager.getLeanbackLaunchIntentForPackage(it) }?.let { startActivity(it) }
+            p.pkg?.let { packageManager.getLeanbackLaunchIntentForPackage(it) }?.let { startApp(it, from) }
         }
     }
 
@@ -3694,7 +4219,7 @@ class MainActivity : Activity() {
                 loading.remove(uri)
             } ?: return@execute
             posters.put(uri, bmp)
-            ui.post { if (v.tag == uri) v.setImageBitmap(bmp) }
+            ui.post { if (!isDestroyed && v.tag == uri) v.setImageBitmap(bmp) }
         }
     }
 
@@ -3841,6 +4366,8 @@ class MainActivity : Activity() {
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
     private companion object {
+        var fakeDevice: String? = null // debug builds: see fakeSetup()
+        var fakeSdk = 0
         const val TV_LISTINGS = "android.permission.READ_TV_LISTINGS"
         const val WRITE_SECURE = "android.permission.WRITE_SECURE_SETTINGS"
         const val ROLE_REQUEST = 2
@@ -3871,13 +4398,13 @@ class MainActivity : Activity() {
             R.string.section_app_row to R.string.help_apps_row, R.string.bottom_row to R.string.help_shows_row,
             R.string.section_screensaver to R.string.help_screensaver, R.string.section_remote_home to R.string.help_remote_home,
             R.string.section_lock to R.string.help_lock,
-            R.string.fade_top to R.string.help_fade_top, R.string.fade_bottom to R.string.help_fade_bottom, R.string.weather_location to R.string.help_location,
+            R.string.wp_dim to R.string.help_wp_dim, R.string.fade_top to R.string.help_fade_top, R.string.fade_bottom to R.string.help_fade_bottom, R.string.weather_location to R.string.help_location,
             R.string.edit_apps_row to R.string.help_rearrange, R.string.apps_in_row to R.string.help_choose_apps,
             R.string.sort_apps to R.string.help_order, R.string.icon_style to R.string.help_icon_style,
             R.string.apps_when_hidden to R.string.help_apps_when_hidden, R.string.row_name to R.string.help_row_name,
             R.string.show_icons to R.string.help_show_icons,
             R.string.cw_apps to R.string.help_from_apps, R.string.cw_channels to R.string.help_channels,
-            R.string.restore_hidden to R.string.help_hidden_shows, R.string.screensaver_timing to R.string.help_start_after,
+            R.string.wp_sources to R.string.help_wp_sources, R.string.restore_hidden to R.string.help_hidden_shows, R.string.screensaver_timing to R.string.help_start_after,
             R.string.home_button to R.string.help_home_button, R.string.smooth_volume to R.string.help_smooth_volume,
             R.string.default_launcher to R.string.help_default_launcher,
             R.string.setup_home to R.string.help_run_setup, R.string.section_keys to R.string.help_remote_keys,
@@ -3907,7 +4434,13 @@ class MainActivity : Activity() {
         const val FADE_STEP = 5 // percent per Left/Right on a fade slider
         const val SLIDER_DP = 96 // a slider's width
         const val SLIDER_VALUE_DP = 72 // width of the value beside a slider
-        const val DARK_DIM = 115 // alpha of the black laid over the Bing picture in dark mode (45%)
+        const val BANNER_DIM = 0.3f // black laid over a colour banner at rest, so the selected one stands out
+        const val FETCH_OK = 0
+        const val FETCH_DEAD = 1
+        const val FETCH_NETWORK = 2
+        const val SHOW_MAX = 12_000_000 // bytes: a bigger show picture is left out
+        /** "Darkening" of a Bing or shows picture in dark mode: Auto, or a percentage of black. Medium is what Plume always did for Bing. */
+        val DIMS = linkedMapOf("auto" to R.string.dim_auto, "0" to R.string.dim_none, "20" to R.string.dim_light, "45" to R.string.dim_medium, "65" to R.string.dim_strong)
         const val PIN_TRIES = 5 // wrong PINs before a 30 s wait
         const val UNLOCKED_MS = 5 * 60_000L
         const val MEDIA_REQUEST = 3
@@ -3988,6 +4521,8 @@ class MainActivity : Activity() {
             "xbox" to R.drawable.logo_xbox,
             "nintendoswitch" to R.drawable.logo_nintendoswitch,
             "appletv" to R.drawable.logo_appletv,
+            "nvidia" to R.drawable.logo_nvidia,
+            "chromecast" to R.drawable.logo_chromecast,
             "settop" to R.drawable.ic_settop,
             "playback" to R.drawable.ic_playback,
             "hdmi" to R.drawable.ic_hdmi,
