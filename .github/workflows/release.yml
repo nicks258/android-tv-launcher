@@ -92,3 +92,4 @@ jobs:
             --title "Plume Launcher ${{ steps.version.outputs.ver }}" \
             --notes "$RELEASE_NOTES" \
             --target main
+

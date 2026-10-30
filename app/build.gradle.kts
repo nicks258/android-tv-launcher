@@ -42,18 +42,24 @@ android {
     // falling back to debug key so anyone can build.
     val keys = rootProject.file("keystore.properties").takeIf { it.exists() }
         ?.let { f -> Properties().apply { f.inputStream().use { load(it) } } }
+    val releaseKeystore = rootProject.file("app/release.keystore").takeIf { it.exists() }
+        ?: file("release.keystore").takeIf { it.exists() }
+    val hasReleaseSigning = keys != null || releaseKeystore != null
+
     signingConfigs {
-        create("release") {
-            if (keys != null) {
-                storeFile = file(keys.getProperty("storeFile"))
-                storePassword = keys.getProperty("storePassword")
-                keyAlias = keys.getProperty("keyAlias")
-                keyPassword = keys.getProperty("keyPassword")
-            } else if (file("release.keystore").exists()) {
-                storeFile = file("release.keystore")
-                storePassword = "android"
-                keyAlias = "androiddebugkey"
-                keyPassword = "android"
+        if (hasReleaseSigning) {
+            create("release") {
+                if (keys != null) {
+                    storeFile = file(keys.getProperty("storeFile"))
+                    storePassword = keys.getProperty("storePassword")
+                    keyAlias = keys.getProperty("keyAlias")
+                    keyPassword = keys.getProperty("keyPassword")
+                } else if (releaseKeystore != null) {
+                    storeFile = releaseKeystore
+                    storePassword = "android"
+                    keyAlias = "androiddebugkey"
+                    keyPassword = "android"
+                }
             }
         }
     }
@@ -76,7 +82,7 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
+            signingConfig = if (hasReleaseSigning) signingConfigs.getByName("release") else signingConfigs.getByName("debug")
         }
     }
 }
