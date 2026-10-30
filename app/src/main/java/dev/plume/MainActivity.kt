@@ -199,14 +199,14 @@ internal fun pinsAfterSourcesUpdate(inputs: List<Pair<String, Boolean>>, hidden:
     pinned + inputs.filter { (pkg, offline) -> pkg !in hidden && (!offline || pkg in pinned) }.map { it.first }
 
 /** The icon styles, in the order the setting steps through them. */
-internal val ICON_STYLE_KEYS = listOf("mono", "colour", "banner", "bannermono")
+internal val ICON_STYLE_KEYS = listOf("default", "colour", "mono", "banner", "bannermono")
 
 /** Banner and Monochrome banner: the row shows the apps' own pictures in 16:9 tiles. */
 internal fun isBannerStyle(style: String) = style.startsWith("banner")
 
 /** The style a stored choice means. Before styles, Colour was an on/off setting ([oldColour]): it decides until a style is picked. */
 internal fun iconStyleOf(stored: String?, oldColour: Boolean) =
-    stored?.takeIf { it in ICON_STYLE_KEYS } ?: if (oldColour) "colour" else "mono"
+    stored?.takeIf { it in ICON_STYLE_KEYS } ?: if (oldColour) "colour" else "default"
 
 /** Allowed to start an activity from the background because the Home button service is bound. */
 class Updated : BroadcastReceiver() {
@@ -253,6 +253,7 @@ class MainActivity : Activity() {
     private var editing = false
     private var grabbed: View? = null
     private var holdFired = false
+    private var lastDpadTime = 0L
     private var dark = false
     private var fg = Color.BLACK
     private var ground = Color.WHITE
@@ -2244,7 +2245,7 @@ class MainActivity : Activity() {
     /** "mono", "colour" or "banner". The old on/off "colour_icons" decides until a style has been picked. */
     private fun iconStyle() = iconStyleOf(prefs.getString("icon_style", null), prefs.getBoolean("colour_icons", false))
 
-    private fun colourIcons() = iconStyle().let { it == "colour" || it == "banner" } // a monochrome banner row keeps the marks grey too
+    private fun colourIcons() = iconStyle().let { it == "colour" || it == "banner" || it == "default" } // a monochrome banner row keeps the marks grey too
 
     /** A brand or app colour made deep enough to carry a white mark. */
     private fun deepen(c: Int) = Color.rgb((Color.red(c) * 0.6f).toInt(), (Color.green(c) * 0.6f).toInt(), (Color.blue(c) * 0.6f).toInt())
@@ -2300,19 +2301,35 @@ class MainActivity : Activity() {
 
     /** The home row shows marks only by default (see rowNames); the All apps grid always labels them. */
     private fun appTile(a: App, labeled: Boolean = true): View {
-        if (!labeled && isBannerStyle(iconStyle())) bannerTile(a)?.let { it.contentDescription = a.label; return it }
-        val logo = LOGOS[a.pkg]
+        val style = iconStyle()
+        if (!labeled && isBannerStyle(style)) bannerTile(a)?.let { it.contentDescription = a.label; return it }
         val custom = customIcon(a.pkg)
         val name = a.label.takeIf { labeled }
+        if (custom != null) {
+            val t = tile(name, custom, false, a.pkg) { launch(a) }
+            t.contentDescription = a.label
+            return t
+        }
+        if (a.pkg.startsWith(HDMI)) {
+            val colour = colourIcons()
+            val t = tile(name, a.icon, true, a.pkg,
+                tint = BRAND_COLOURS[hdmiIcon(a.label, true)]?.takeIf { colour }) { launch(a) }
+            t.contentDescription = a.label
+            return t
+        }
+        if (style == "default") {
+            val icon = (a.icon.constantState?.newDrawable(resources) ?: a.icon).mutate().apply { colorFilter = null }
+            val t = tile(name, icon, false, a.pkg) { launch(a) }
+            t.contentDescription = a.label
+            return t
+        }
+        val logo = LOGOS[a.pkg]
         // Colour mode keeps the same marks, tinted with the brand colour (or the colour the app's icon is mostly).
         val colour = colourIcons()
         // A banner style, an app with no banner: its own colour behind its mark in white, so the row doesn't mix pictures
         // and grey squares. HDMI tiles keep the plain mark.
-        val onColour = !labeled && isBannerStyle(iconStyle()) && !a.pkg.startsWith(HDMI)
+        val onColour = !labeled && isBannerStyle(style) && !a.pkg.startsWith(HDMI)
         val t = when {
-            custom != null -> tile(name, custom, false, a.pkg) { launch(a) }
-            a.pkg.startsWith(HDMI) -> tile(name, a.icon, true, a.pkg,
-                tint = BRAND_COLOURS[hdmiIcon(a.label, true)]?.takeIf { colour }) { launch(a) }
             logo != null -> tile(name.takeIf { !logo.second }, getDrawable(logo.first)!!, true, a.pkg,
                 wordmarkInset = if (!logo.second) null else dp(if (labeled) 28 else 14),
                 tint = if (onColour && BRAND_COLOURS[a.pkg] != null) Color.WHITE else BRAND_COLOURS[a.pkg]?.takeIf { colour }) { launch(a) }
@@ -2395,7 +2412,7 @@ class MainActivity : Activity() {
             }
         }
         // Same card as light mode; in dark the marks rest slightly dimmed and brighten with focus.
-        val restLogo = if (dark) 0.8f else 1f
+        val restLogo = if (dark) (if (iconStyle() == "default") 0.95f else 0.8f) else 1f
         val restText = if (dark) 0.65f else 1f
         img.alpha = restLogo
         text?.alpha = restText
@@ -2417,7 +2434,8 @@ class MainActivity : Activity() {
             }
             col.addView(img, LinearLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         } else {
-            col.addView(img, LinearLayout.LayoutParams(MATCH_PARENT, dp(26)))
+            val h = if (iconStyle() == "default") dp(32) else dp(26)
+            col.addView(img, LinearLayout.LayoutParams(MATCH_PARENT, h))
             col.addView(text, LinearLayout.LayoutParams(MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         }
         col.tag = tag
@@ -2509,6 +2527,23 @@ class MainActivity : Activity() {
      * listener in style() is a fallback for remotes that send no repeats. [holdFired] stops both firing.
      */
     override fun dispatchKeyEvent(e: KeyEvent): Boolean {
+        if (e.keyCode == KeyEvent.KEYCODE_HOME && e.action == KeyEvent.ACTION_DOWN) {
+            if (editing) endEdit()
+            if (settingsScrim.visibility == View.VISIBLE) closeLauncherSettings()
+            if (allApps.visibility == View.VISIBLE) closeAllApps()
+            watchScroll.scrollTo(0, 0)
+            appRow.getChildAt(0)?.requestFocus()
+            return true
+        }
+        val isDpad = e.keyCode == KeyEvent.KEYCODE_DPAD_LEFT || e.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT ||
+            e.keyCode == KeyEvent.KEYCODE_DPAD_UP || e.keyCode == KeyEvent.KEYCODE_DPAD_DOWN
+        if (isDpad && e.action == KeyEvent.ACTION_DOWN) {
+            val now = SystemClock.uptimeMillis()
+            if (e.repeatCount > 0 && now - lastDpadTime < 180) {
+                return true
+            }
+            lastDpadTime = now
+        }
         val confirm = e.keyCode == KeyEvent.KEYCODE_DPAD_CENTER || e.keyCode == KeyEvent.KEYCODE_ENTER ||
             e.keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER
         if (confirm) {
@@ -2558,20 +2593,23 @@ class MainActivity : Activity() {
                 KeyEvent.KEYCODE_DPAD_RIGHT -> if (v.id == R.id.launcherSettings) v else null
                 else -> null
             }
-            v.parent === appRow -> when (key) {
-                KeyEvent.KEYCODE_DPAD_UP -> top
-                KeyEvent.KEYCODE_DPAD_DOWN -> cards ?: v
-                KeyEvent.KEYCODE_DPAD_LEFT -> if (appRow.indexOfChild(v) == 0) v else null
-                KeyEvent.KEYCODE_DPAD_RIGHT -> if (appRow.indexOfChild(v) == appRow.childCount - 1) v else null
-                else -> null
+            v.parent === appRow -> {
+                val idx = appRow.indexOfChild(v)
+                when (key) {
+                    KeyEvent.KEYCODE_DPAD_UP -> top
+                    KeyEvent.KEYCODE_DPAD_DOWN -> cards ?: v
+                    KeyEvent.KEYCODE_DPAD_LEFT -> if (idx > 0) appRow.getChildAt(idx - 1) else v
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> if (idx < appRow.childCount - 1) appRow.getChildAt(idx + 1) else v
+                    else -> null
+                }
             }
             v.getTag(R.id.watchRow) is Prog -> {
                 val i = watchRow.indexOfChild(v.parent as View)
                 when (key) {
                     KeyEvent.KEYCODE_DPAD_UP -> apps ?: top
                     KeyEvent.KEYCODE_DPAD_DOWN -> v
-                    KeyEvent.KEYCODE_DPAD_LEFT -> if (i == 0) v else null
-                    KeyEvent.KEYCODE_DPAD_RIGHT -> if (i == watchRow.childCount - 1) v else null
+                    KeyEvent.KEYCODE_DPAD_LEFT -> if (i > 0) (watchRow.getChildAt(i - 1) as? ViewGroup)?.getChildAt(0) else v
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> if (i < watchRow.childCount - 1) (watchRow.getChildAt(i + 1) as? ViewGroup)?.getChildAt(0) else v
                     else -> null
                 }
             }
@@ -3457,6 +3495,13 @@ class MainActivity : Activity() {
     /** Small source-app mark for the details line: its logo when we have one (brand colour with colour icons), else its icon (greyscale unless colour). */
     private fun sourceIcon(pkg: String?): Drawable? {
         if (pkg == null) return null
+        if (iconStyle() == "default") {
+            return try {
+                packageManager.getApplicationIcon(pkg).mutate().apply { colorFilter = null }
+            } catch (e: PackageManager.NameNotFoundException) {
+                null
+            }
+        }
         val colour = cwColour()
         val tint = BRAND_COLOURS[pkg]?.takeIf { colour } ?: fg
         LOGOS[pkg]?.takeIf { !it.second }?.let { return getDrawable(it.first)!!.mutate().apply { setTint(tint) } }
@@ -3882,7 +3927,7 @@ class MainActivity : Activity() {
         const val HDMI = "hdmi:" // App.pkg prefix for HDMI device tiles; the rest is the TV input id
         const val ROW_TILES = 8
         /** Icon style setting -> its name. */
-        val ICON_STYLES = linkedMapOf(ICON_STYLE_KEYS[0] to R.string.monochrome, ICON_STYLE_KEYS[1] to R.string.colour, ICON_STYLE_KEYS[2] to R.string.banner, ICON_STYLE_KEYS[3] to R.string.banner_mono)
+        val ICON_STYLES = linkedMapOf(ICON_STYLE_KEYS[0] to R.string.icon_default, ICON_STYLE_KEYS[1] to R.string.colour, ICON_STYLE_KEYS[2] to R.string.monochrome, ICON_STYLE_KEYS[3] to R.string.banner, ICON_STYLE_KEYS[4] to R.string.banner_mono)
         const val GRID_GAP = 16 // dp; shared by the apps row and the cards so their columns line up
         /** Shown names for the wallpaper keys saved in prefs (the keys stay English). */
         val WALLPAPER_NAMES = mapOf(

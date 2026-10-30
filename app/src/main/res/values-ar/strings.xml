@@ -59,6 +59,7 @@
     <string name="always">دائمًا</string>
     <string name="never">أبدًا</string>
     <string name="icon_style">نمط الأيقونات</string>
+    <string name="icon_default">الافتراضي</string>
     <string name="colour">ملوّن</string>
     <string name="monochrome">أحادي اللون</string>
     <string name="restore_hidden">استعادة العروض المخفية</string>

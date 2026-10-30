@@ -59,6 +59,7 @@
     <string name="always">Her zaman</string>
     <string name="never">Hiçbir zaman</string>
     <string name="icon_style">Simge stili</string>
+    <string name="icon_default">Varsayılan</string>
     <string name="colour">Renkli</string>
     <string name="monochrome">Monokrom</string>
     <string name="restore_hidden">Gizlenen içerikleri geri yükle</string>

@@ -1,0 +1,67 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Run: Android TV Emulator",
+            "type": "shell",
+            "command": "./scripts/run_app.sh run emulator",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": false
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Hot Reload / Fast Restart: Emulator",
+            "type": "shell",
+            "command": "./scripts/run_app.sh reload emulator",
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": false
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Run: Physical Android TV",
+            "type": "shell",
+            "command": "./scripts/run_app.sh tv tv",
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": false
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Start Android TV Emulator",
+            "type": "shell",
+            "command": "./scripts/run_app.sh emulator-start",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": false
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "View Emulator Logs (logcat)",
+            "type": "shell",
+            "command": "adb -s emulator-5554 logcat -v time dev.plume:V *:S",
+            "isBackground": true,
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "clear": false
+            },
+            "problemMatcher": []
+        }
+    ]
+}

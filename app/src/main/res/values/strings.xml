@@ -61,6 +61,7 @@
     <string name="always">Always</string>
     <string name="never">Never</string>
     <string name="icon_style">Icon style</string>
+    <string name="icon_default">Default</string>
     <string name="colour">Colour</string>
     <string name="monochrome">Monochrome</string>
     <string name="banner">Banner</string>

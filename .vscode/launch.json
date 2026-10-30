@@ -1,0 +1,29 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run on Android TV Emulator",
+            "type": "java",
+            "request": "attach",
+            "hostName": "localhost",
+            "port": 8700,
+            "preLaunchTask": "Run: Android TV Emulator"
+        },
+        {
+            "name": "Hot Reload / Fast Restart (Emulator)",
+            "type": "java",
+            "request": "attach",
+            "hostName": "localhost",
+            "port": 8700,
+            "preLaunchTask": "Hot Reload / Fast Restart: Emulator"
+        },
+        {
+            "name": "Run on Physical TV",
+            "type": "java",
+            "request": "attach",
+            "hostName": "localhost",
+            "port": 8700,
+            "preLaunchTask": "Run: Physical Android TV"
+        }
+    ]
+}
