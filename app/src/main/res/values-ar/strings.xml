@@ -1,4 +1,5 @@
 <resources>
+    <string name="app_name">Android TV Launcher</string>
     <string name="override_desc">يفتح Plume كلما ظهرت الشاشة الرئيسية لـ Google TV، فيعيدك زر الرئيسية إلى هنا.</string>
     <string name="delete_photo">حذف \"%1$s\"؟</string>
     <string name="photo_added">تمت إضافة \"%1$s\". أرسل صورة أخرى، أو اضغط تم.</string>

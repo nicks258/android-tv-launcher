@@ -1,4 +1,5 @@
 <resources>
+    <string name="app_name">Android TV Launcher</string>
     <string name="override_desc">Ouvre Plume dès que l\'écran d\'accueil Google TV apparaît, pour que le bouton Accueil arrive ici.</string>
     <string name="delete_photo">Supprimer « %1$s » ?</string>
     <string name="photo_added">« %1$s » ajoutée. Envoyez-en une autre ou appuyez sur Terminé.</string>

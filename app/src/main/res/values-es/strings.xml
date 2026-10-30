@@ -1,4 +1,5 @@
 <resources>
+    <string name="app_name">Android TV Launcher</string>
     <string name="override_desc">Abre Plume cada vez que aparece la pantalla de inicio de Google TV, para que el botón Inicio te lleve aquí.</string>
     <string name="delete_photo">¿Eliminar \"%1$s\"?</string>
     <string name="photo_added">Se añadió \"%1$s\". Envía otra o pulsa Listo.</string>

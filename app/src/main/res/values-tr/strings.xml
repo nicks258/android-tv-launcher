@@ -1,4 +1,5 @@
 <resources>
+    <string name="app_name">Android TV Launcher</string>
     <string name="override_desc">Google TV ana ekranı her açıldığında Plume\'u başlatır, böylece kumandanın Ana Ekran tuşu buraya gelir.</string>
     <string name="delete_photo">\"%1$s\" silinsin mi?</string>
     <string name="photo_added">\"%1$s\" eklendi. Başka bir fotoğraf gönderin veya Bitti\'ye basın.</string>
