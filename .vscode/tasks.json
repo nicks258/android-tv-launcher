@@ -62,6 +62,17 @@
                 "clear": false
             },
             "problemMatcher": []
+        },
+        {
+            "label": "Sync from Upstream (aradhyas8/Plume_Launcher)",
+            "type": "shell",
+            "command": "./scripts/sync_upstream.sh",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": false
+            },
+            "problemMatcher": []
         }
     ]
 }
