@@ -129,3 +129,4 @@ Please checkout \`$SYNC_BRANCH\`, resolve conflicts locally, push, and merge thi
               --title "$PR_TITLE" \
               --body "$PR_BODY"
           fi
+

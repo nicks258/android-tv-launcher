@@ -1,0 +1,94 @@
+name: Build & Release Update APK
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'README.md'
+      - 'docs/**'
+      - '.vscode/**'
+      - '.github/workflows/sync-upstream.yml'
+  workflow_dispatch:
+    inputs:
+      version_name:
+        description: 'Custom version name (leave empty for auto 1.6.<run_number>)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Determine Version
+        id: version
+        run: |
+          RUN_NUM=${{ github.run_number }}
+          if [ -n "${{ github.event.inputs.version_name }}" ]; then
+            VER="${{ github.event.inputs.version_name }}"
+          else
+            VER="1.6.${RUN_NUM}"
+          fi
+          VCODE=$((800 + RUN_NUM))
+          TAG="v${VER}"
+
+          echo "ver=${VER}" >> "$GITHUB_OUTPUT"
+          echo "vcode=${VCODE}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Building Plume Launcher version $VER (code $VCODE, tag $TAG)..."
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Build Release APK
+        run: |
+          ./gradlew assembleRelease -PversionCode=${{ steps.version.outputs.vcode }} -PversionName="${{ steps.version.outputs.ver }}"
+
+      - name: Prepare Release Asset
+        run: |
+          # Plume app expects the release asset to be named Plume.apk
+          cp app/build/outputs/apk/release/app-release.apk Plume.apk
+          ls -lh Plume.apk
+
+      - name: Generate Release Notes
+        id: notes
+        run: |
+          echo "RELEASE_NOTES<<EOF" >> "$GITHUB_ENV"
+          echo "### Plume Launcher ${{ steps.version.outputs.ver }}" >> "$GITHUB_ENV"
+          echo "" >> "$GITHUB_ENV"
+          echo "#### Changes in this build:" >> "$GITHUB_ENV"
+          git log -5 --pretty=format:"- %s (%h)" >> "$GITHUB_ENV"
+          echo "" >> "$GITHUB_ENV"
+          echo "---" >> "$GITHUB_ENV"
+          echo "📺 **How to update directly from TV:**" >> "$GITHUB_ENV"
+          echo "1. On your Android TV, open **Plume settings → Updates**." >> "$GITHUB_ENV"
+          echo "2. Select **Check for updates** (or wait for the auto-announcement)." >> "$GITHUB_ENV"
+          echo "3. Click **Install update ${{ steps.version.outputs.ver }}**." >> "$GITHUB_ENV"
+          echo "EOF" >> "$GITHUB_ENV"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" Plume.apk \
+            --title "Plume Launcher ${{ steps.version.outputs.ver }}" \
+            --notes "$RELEASE_NOTES" \
+            --target main

@@ -13,15 +13,17 @@ android {
         applicationId = "dev.plume"
         minSdk = 26
         targetSdk = 36
-        versionCode = 8
-        versionName = "1.6"
+        versionCode = (project.findProperty("versionCode") as? String)?.toIntOrNull() ?: 8
+        val verName = (project.findProperty("versionName") as? String) ?: "1.6"
+        versionName = verName
         // What's new: only this version's section of CHANGELOG.md ships, one entry per line, ** marks kept for bold.
         // A ### heading ships as a line that starts with #.
+        val baseVersion = verName.split('.').take(2).joinToString(".")
         val notes = rootProject.file("CHANGELOG.md").readText().replace("\r", "")
-            .substringAfter("\n## $versionName\n", "").substringBefore("\n## ")
+            .substringAfter("\n## $baseVersion\n", "").substringBefore("\n## ")
             .lines().filter { it.startsWith("- ") || it.startsWith("### ") }
             .map { if (it.startsWith("### ")) "#" + it.removePrefix("### ") else it.removePrefix("- ") }
-        require(notes.isNotEmpty()) { "CHANGELOG.md has no entries under \"## $versionName\"" }
+        require(notes.isNotEmpty()) { "CHANGELOG.md has no entries under \"## $baseVersion\"" }
         resValue("string", "whats_new", notes.joinToString("\\n") { it.replace("'", "\\'").replace("\"", "\\\"") })
     }
 
@@ -36,16 +38,23 @@ android {
         disable += setOf("MissingTranslation", "ExtraTranslation")
     }
 
-    // Release key lives outside the repo; keystore.properties (git-ignored) points at it. Without that file
-    // (a fresh clone) release builds fall back to the debug key, so anyone can still build and sideload.
+    // Release key: uses keystore.properties if provided, or app/release.keystore bundled in repo,
+    // falling back to debug key so anyone can build.
     val keys = rootProject.file("keystore.properties").takeIf { it.exists() }
         ?.let { f -> Properties().apply { f.inputStream().use { load(it) } } }
     signingConfigs {
-        if (keys != null) create("release") {
-            storeFile = file(keys.getProperty("storeFile"))
-            storePassword = keys.getProperty("storePassword")
-            keyAlias = keys.getProperty("keyAlias")
-            keyPassword = keys.getProperty("keyPassword")
+        create("release") {
+            if (keys != null) {
+                storeFile = file(keys.getProperty("storeFile"))
+                storePassword = keys.getProperty("storePassword")
+                keyAlias = keys.getProperty("keyAlias")
+                keyPassword = keys.getProperty("keyPassword")
+            } else if (file("release.keystore").exists()) {
+                storeFile = file("release.keystore")
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
         }
     }
 

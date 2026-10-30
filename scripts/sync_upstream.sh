@@ -47,3 +47,4 @@ fi
 
 echo "==> Running unit tests to verify merged changes..."
 ./gradlew testDebugUnitTest --quiet && echo "==> All unit tests passed!"
+
