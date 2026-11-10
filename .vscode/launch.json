@@ -2,28 +2,56 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Run on Android TV Emulator",
+            "name": "Android Launcher: Run on Simulator",
             "type": "java",
             "request": "attach",
             "hostName": "localhost",
             "port": 8700,
-            "preLaunchTask": "Run: Android TV Emulator"
+            "preLaunchTask": "Android Launcher: Run on Simulator"
         },
         {
-            "name": "Hot Reload / Fast Restart (Emulator)",
+            "name": "Android Launcher: Run on Home TV",
             "type": "java",
             "request": "attach",
             "hostName": "localhost",
             "port": 8700,
-            "preLaunchTask": "Hot Reload / Fast Restart: Emulator"
+            "preLaunchTask": "Android Launcher: Run on Home TV"
         },
         {
-            "name": "Run on Physical TV",
+            "name": "Android Launcher: Run on TV (Custom IP)",
             "type": "java",
             "request": "attach",
             "hostName": "localhost",
             "port": 8700,
-            "preLaunchTask": "Run: Physical Android TV"
+            "preLaunchTask": "Android Launcher: Run on TV (Custom IP)"
+        },
+        {
+            "name": "Android Launcher: Hot Reload / Restart (Simulator)",
+            "type": "java",
+            "request": "attach",
+            "hostName": "localhost",
+            "port": 8700,
+            "preLaunchTask": "Android Launcher: Hot Reload / Fast Restart (Simulator)"
+        },
+        {
+            "name": "Android Launcher: Hot Reload / Restart (Home TV)",
+            "type": "java",
+            "request": "attach",
+            "hostName": "localhost",
+            "port": 8700,
+            "preLaunchTask": "Android Launcher: Hot Reload / Fast Restart (Home TV)"
+        },
+        {
+            "name": "Android Launcher: Install & Run Simulator (Direct Terminal)",
+            "type": "node-terminal",
+            "request": "launch",
+            "command": "./scripts/run_app.sh run emulator"
+        },
+        {
+            "name": "Android Launcher: Install & Run Home TV (Direct Terminal)",
+            "type": "node-terminal",
+            "request": "launch",
+            "command": "./scripts/run_app.sh run tv"
         }
     ]
 }

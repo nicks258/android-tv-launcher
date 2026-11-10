@@ -3,6 +3,7 @@ package dev.plume
 import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.app.Activity
+import android.app.ActivityManager
 import android.app.ActivityOptions
 import android.app.Dialog
 import android.app.PendingIntent
@@ -19,6 +20,7 @@ import android.content.pm.PackageInstaller
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
+import android.database.ContentObserver
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
@@ -70,6 +72,7 @@ import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
 import android.view.Window
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.inputmethod.EditorInfo
@@ -326,8 +329,6 @@ class MainActivity : Activity() {
         super.onCreate(state)
         setContentView(R.layout.activity_main)
         glass = GlassLayer(this)
-        findViewById<ViewGroup>(R.id.root).addView(glass, 1, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)) // over the wallpaper, under the home screen
-        for (id in intArrayOf(R.id.appScroll, R.id.watchScroll, R.id.allApps)) findViewById<View>(id).setOnScrollChangeListener { _, _, _, _, _ -> glass.kick(150) }
         appRow = findViewById(R.id.appRow)
         watchRow = findViewById(R.id.watchRow)
         watchTitle = findViewById(R.id.watchTitle)
@@ -336,40 +337,9 @@ class MainActivity : Activity() {
         allApps = findViewById(R.id.allApps)
         allAppsGrid = findViewById(R.id.allAppsGrid)
         wifi = findViewById(R.id.wifi)
-        applyTopBar()
-        applyTheme()
+        setupPlumeHomeV2()
         loadWallpaper()
-        // "Show row: On Down": the row slides in while one of its cards has focus, however focus got there.
-        window.decorView.viewTreeObserver.addOnGlobalFocusChangeListener { _, now ->
-            val out = rowShow() == "down" && now?.getTag(R.id.watchRow) is Prog
-            if (out != rowOut) { rowOut = out; placeRow(animate = true) }
-        }
-        watchScroll.addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
-            if (top != oldTop || bottom != oldBottom) placeRow(animate = false) // the drop is measured from the layout
-        }
 
-        // Top bar: network, All apps, Android settings, launcher settings. Round, lit on focus.
-        for ((id, action) in listOf<Pair<Int, () -> Unit>>(
-            R.id.wifi to { unlock { openSettings(Settings.ACTION_WIFI_SETTINGS) } },
-            R.id.sourcesButton to { showSources(findViewById(R.id.sourcesButton)) },
-            R.id.allAppsButton to { openAllApps() },
-            R.id.systemSettings to { unlock { openSettings(Settings.ACTION_SETTINGS) } },
-            R.id.launcherSettings to { unlock { openLauncherSettings() } },
-        )) findViewById<ImageView>(id).apply {
-            setColorFilter(fg)
-            val ring = GradientDrawable().apply { shape = GradientDrawable.OVAL }
-            // Lit, the icon sits on its ring, so it takes the theme colour; otherwise it's on the wallpaper (see fitInk).
-            background = ring
-            setOnFocusChangeListener { v, focused ->
-                if (focused) lastTop = v
-                ring.setColor(if (!focused) 0 else if (dark) DARK_CARD_LIT[0] else Color.WHITE)
-                setColorFilter(if (focused) fg else iconInk)
-                animate().scaleX(if (focused) 1.15f else 1f).scaleY(if (focused) 1.15f else 1f)
-                    .setDuration(160).setInterpolator(DECELERATE).start()
-            }
-            setOnClickListener { action() }
-            setOnLongClickListener { if (!holdFired) fireHold(this); true } // hold OK: move, hide or add icons
-        }
         if (fakeSetup(intent)) {
             // debug: setup for a pretend TV already started
         } else if (prefs.getBoolean("reopen_settings", false)) {
@@ -383,14 +353,7 @@ class MainActivity : Activity() {
             ui.post { whatsNewCard() } // after an update; the self-updater reopens Plume, so it's seen right away
         }
 
-        registerReceiver(packageReceiver, IntentFilter().apply {
-            addAction(Intent.ACTION_PACKAGE_ADDED)
-            addAction(Intent.ACTION_PACKAGE_REMOVED)
-            addAction(Intent.ACTION_PACKAGE_CHANGED)
-            addDataScheme("package")
-        })
-        // Application context: ConnectivityManager keeps its first instance (and that instance's context) in a
-        // static callback handler forever, so an Activity context here leaks the whole first home screen.
+        // Application context: ConnectivityManager keeps its first instance in static callback
         applicationContext.getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(net)
         getSystemService(TvInputManager::class.java)?.registerCallback(inputCallback, ui)
 
@@ -411,6 +374,49 @@ class MainActivity : Activity() {
             recreate()
             return
         }
+
+        // Register package change receiver only while home is visible
+        try {
+            registerReceiver(packageReceiver, IntentFilter().apply {
+                addAction(Intent.ACTION_PACKAGE_ADDED)
+                addAction(Intent.ACTION_PACKAGE_REMOVED)
+                addAction(Intent.ACTION_PACKAGE_CHANGED)
+                addDataScheme("package")
+            })
+        } catch (e: Exception) {}
+
+        if (::watchHandoffManager.isInitialized) {
+            watchHandoffManager.register()
+        }
+
+        if (currentTab == "live") {
+            findViewById<ImageView>(R.id.wallpaper)?.setImageDrawable(ColorDrawable(Color.parseColor("#090B10")))
+            findViewById<View>(R.id.gradientOverlay)?.visibility = View.GONE
+            liveTvGuideView?.onTabSelected()
+        }
+
+        // Refresh TMDB home hero on resume
+        if (::tmdbRepository.isInitialized && currentTab == "home") {
+            fetchTmdbHero()
+            resumeHeroRotation()
+        }
+
+        // Query Onyx TV content provider for featured hero items in background
+        queryOnyxFeatured()
+        if (!onyxObserverRegistered) {
+            try {
+                val pkg = dev.plume.livetv.LiveTvRepository.resolveActivePackage(this)
+                contentResolver.registerContentObserver(
+                    Uri.parse("content://${pkg}.provider/featured"),
+                    true,
+                    onyxFeaturedObserver
+                )
+                onyxObserverRegistered = true
+            } catch (e: Exception) {}
+        }
+
+        startHeroRotation()
+
         // Only rebuild what changed, so focus stays where it was when returning from an app.
         if (appsDirty) refreshApps() else if (appRow.childCount == 0) renderApps()
         refreshWatchNext()
@@ -421,7 +427,7 @@ class MainActivity : Activity() {
         ui.removeCallbacks(wallpaperTick)
         ui.post(wallpaperTick)
         updateFeatured()
-        // Gallery chosen but its paintings missing (updated from a version that bundled them): fetch them.
+        // Gallery chosen but its paintings missing: fetch them.
         if (galleryOn() && photoScreensaver() == null && !paintingsReady(this)) downloadPaintings {}
         checkUpdate(force = false)
         Bing.onChanged = bingChanged
@@ -459,6 +465,19 @@ class MainActivity : Activity() {
         ui.removeCallbacks(wallpaperTick)
         if (editing) endEdit()
         if (movingTop != null) endTopMove(false) // Home or an app opened in the middle of a move: the bar goes back as it was
+
+        // Pause hero rotation and cleanup receivers while home is hidden
+        pauseHeroRotation()
+        if (::watchHandoffManager.isInitialized) {
+            watchHandoffManager.unregister()
+        }
+        try { unregisterReceiver(packageReceiver) } catch (e: Exception) {}
+        if (onyxObserverRegistered) {
+            try {
+                contentResolver.unregisterContentObserver(onyxFeaturedObserver)
+                onyxObserverRegistered = false
+            } catch (e: Exception) {}
+        }
         super.onPause()
     }
 
@@ -466,6 +485,10 @@ class MainActivity : Activity() {
         unlockedUntil = 0L // leaving the home screen locks it again (onPause would also fire for permission dialogs)
         Remap.learn = null // never keep swallowing keys for a page that's no longer on screen
         if (homeTest != 0) leftDuringTest = true
+        pauseHeroRotation()
+        if (::tmdbImageLoader.isInitialized) {
+            tmdbImageLoader.clearMemoryCache()
+        }
         super.onStop()
     }
 
@@ -842,8 +865,13 @@ class MainActivity : Activity() {
     @Deprecated("Home screen: Back only closes overlays")
     override fun onBackPressed() {
         when {
+            findViewById<View>(R.id.launchFailureToast)?.visibility == View.VISIBLE -> {
+                hideLaunchFailureToast()
+                onyxTileView?.requestFocus()
+            }
             settingsScrim.visibility == View.VISIBLE -> pageBack?.invoke() ?: closeLauncherSettings()
             allApps.visibility == View.VISIBLE -> closeAllApps()
+            currentTab != "home" -> switchTab("home")
         }
     }
 
@@ -864,10 +892,14 @@ class MainActivity : Activity() {
         ground = if (dark) DARK_BG else 0xFFF3F5F7.toInt()
         findViewById<View>(R.id.root).setBackgroundColor(ground)
         allApps.setBackgroundColor(ground)
-        for (id in intArrayOf(R.id.clock, R.id.date, R.id.appsTitle, R.id.watchTitle, R.id.allAppsTitle, R.id.rowLabel, R.id.weather, R.id.featured)) {
-            findViewById<TextView>(id).setTextColor(fg)
+        findViewById<TextView>(R.id.clock)?.setTextColor(Color.WHITE)
+        findViewById<TextView>(R.id.date)?.setTextColor(0xFF929AAA.toInt())
+        findViewById<TextView>(R.id.weather)?.setTextColor(0xFF929AAA.toInt())
+        findViewById<TextView>(R.id.appsTitle)?.setTextColor(Color.WHITE)
+        for (id in intArrayOf(R.id.watchTitle, R.id.allAppsTitle, R.id.rowLabel, R.id.featured)) {
+            findViewById<TextView>(id)?.setTextColor(fg)
         }
-        iconInk = fg
+        iconInk = Color.WHITE
         for (v in topIcons()) v.setColorFilter(if (v.isFocused) fg else iconInk)
         watchInk = fg
     }
@@ -885,20 +917,13 @@ class MainActivity : Activity() {
         .map { findViewById<ImageView>(it) }
 
     private fun fitInk() {
-        val top = listOf(R.id.clock, R.id.date, R.id.weather, R.id.featured).map { findViewById<TextView>(it) }
-        val topInk = inkBehind(top)
-        for (v in top) ink(v, topInk, fade = true)
+        findViewById<TextView>(R.id.clock)?.setTextColor(Color.WHITE)
+        findViewById<TextView>(R.id.date)?.setTextColor(0xFF929AAA.toInt())
+        findViewById<TextView>(R.id.weather)?.setTextColor(0xFF929AAA.toInt())
         val icons = topIcons()
-        iconInk = inkBehind(icons)
-        for (v in icons) if (!v.isFocused) v.setColorFilter(iconInk)
-        val apps = listOf(R.id.appsTitle, R.id.rowLabel).map { findViewById<TextView>(it) }
-        val appsInk = inkBehind(apps)
-        for (v in apps) ink(v, appsInk, fade = true)
-        val watch = listOf(watchTitle) + (0 until watchRow.childCount).flatMap { i ->
-            (watchRow.getChildAt(i) as ViewGroup).let { col -> (0 until col.childCount).mapNotNull { col.getChildAt(it) as? TextView } }
-        }
-        watchInk = inkBehind(watch)
-        for (v in watch) ink(v, watchInk, fade = true)
+        for (v in icons) if (!v.isFocused) v.setColorFilter(Color.WHITE)
+        val apps = listOf(R.id.appsTitle, R.id.rowLabel).mapNotNull { findViewById<TextView>(it) }
+        for (v in apps) v.setTextColor(Color.WHITE)
     }
 
     /** White or near-black, by the average brightness of the wallpaper under [views]; the theme colour without a photo. */
@@ -968,8 +993,8 @@ class MainActivity : Activity() {
     private fun currentWallpaper(forDark: Boolean = dark) =
         prefs.getString(if (forDark) "wp_dark" else "wp_light", null) ?: defaultWallpaper(forDark)
 
-    /** Glass: the tiles are see-through over a blur of the wallpaper (a setting, on by default since 1.6). */
-    private fun glassOn() = prefs.getBoolean("glass", true)
+    /** Glass: turned off for Phase 2 zero-blur requirement. */
+    private fun glassOn() = false
 
     /** Glass needs a picture to blur: with a plain background the tiles stay as they are. */
     private fun glassActive() = glassOn() && !currentWallpaper().startsWith("plain:")
@@ -1040,6 +1065,13 @@ class MainActivity : Activity() {
 
     private fun loadWallpaper() {
         val view = findViewById<ImageView>(R.id.wallpaper)
+        if (heroItems.isNotEmpty()) {
+            val item = heroItems.getOrNull(currentHeroIndex) ?: heroItems[0]
+            if (item.backdropRes != 0) {
+                view?.setImageResource(item.backdropRes)
+                return
+            }
+        }
         val choice = currentWallpaper()
         if (choice.startsWith("plain:")) { // the root's ground colour shows through
             view.setImageDrawable(null)
@@ -1183,6 +1215,171 @@ class MainActivity : Activity() {
     private fun stepFade(key: String, dir: Int) {
         prefs.edit().putInt(key, (fade(key) + FADE_STEP * dir).coerceIn(0, 100)).apply()
         refreshFades()
+    }
+
+    private fun showTmdbTokenDialog() {
+        val dialog = Dialog(this)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = GradientDrawable().apply {
+                setColor(0xFF141821.toInt())
+                cornerRadius = dp(16).toFloat()
+                setStroke(dp(1), 0x33FFFFFF)
+            }
+            setPadding(dp(28), dp(24), dp(28), dp(24))
+            layoutParams = ViewGroup.LayoutParams(dp(440), ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
+
+        val titleTv = TextView(this).apply {
+            text = "TMDB Read Access Token"
+            textSize = 16f
+            setTextColor(Color.WHITE)
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        }
+        layout.addView(titleTv)
+
+        val descTv = TextView(this).apply {
+            text = "Enter your TMDB API v4 Read Access Token (or 32-character API key) to personalize movies and series."
+            textSize = 11f
+            setTextColor(0xFF929AAA.toInt())
+            setPadding(0, dp(6), 0, dp(14))
+        }
+        layout.addView(descTv)
+
+        val input = EditText(this).apply {
+            setText(prefs.getString("tmdb_token", ""))
+            setTextColor(Color.WHITE)
+            textSize = 12f
+            background = GradientDrawable().apply {
+                setColor(0xFF1C2130.toInt())
+                cornerRadius = dp(8).toFloat()
+                setStroke(dp(1), 0x44FFFFFF)
+            }
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            isSingleLine = true
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = dp(16)
+            }
+        }
+        layout.addView(input)
+
+        val btnRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+        }
+
+        val btnClear = TextView(this).apply {
+            text = "Clear"
+            textSize = 12f
+            setTextColor(0xFF929AAA.toInt())
+            background = GradientDrawable().apply {
+                setColor(0x22FFFFFF)
+                cornerRadius = dp(8).toFloat()
+            }
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+            isFocusable = true
+            isClickable = true
+            setOnClickListener {
+                prefs.edit().remove("tmdb_token").apply()
+                dialog.dismiss()
+                fetchTmdbHero()
+                renderSettings(R.string.tmdb_token)
+            }
+        }
+        TvFocusHelper.attach(btnClear, cornerRadiusPx = dp(8).toFloat(), isButton = true)
+        btnRow.addView(btnClear)
+
+        val btnSave = TextView(this).apply {
+            text = "Save"
+            textSize = 12f
+            setTextColor(Color.WHITE)
+            background = GradientDrawable().apply {
+                setColor(0xFF8B7CFF.toInt())
+                cornerRadius = dp(8).toFloat()
+            }
+            setPadding(dp(20), dp(8), dp(20), dp(8))
+            isFocusable = true
+            isClickable = true
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                marginStart = dp(12)
+            }
+            setOnClickListener {
+                val newToken = input.text.toString().trim()
+                prefs.edit().putString("tmdb_token", newToken).apply()
+                dialog.dismiss()
+                fetchTmdbHero()
+                renderSettings(R.string.tmdb_token)
+            }
+        }
+        TvFocusHelper.attach(btnSave, cornerRadiusPx = dp(8).toFloat(), isButton = true)
+        btnRow.addView(btnSave)
+
+        layout.addView(btnRow)
+        dialog.setContentView(layout)
+        dialog.show()
+        btnSave.requestFocus()
+    }
+
+    private fun showTmdbAttributionDialog() {
+        val dialog = Dialog(this)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            background = GradientDrawable().apply {
+                setColor(0xFF141821.toInt())
+                cornerRadius = dp(16).toFloat()
+                setStroke(dp(1), 0x33FFFFFF)
+            }
+            setPadding(dp(32), dp(28), dp(32), dp(28))
+            layoutParams = ViewGroup.LayoutParams(dp(440), ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
+
+        val logoText = TextView(this).apply {
+            text = "TMDB"
+            textSize = 28f
+            setTextColor(0xFF01B4E4.toInt()) // TMDB cyan/teal
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+        }
+        layout.addView(logoText)
+
+        val descTv = TextView(this).apply {
+            text = "This product uses the TMDB API but is not endorsed or certified by TMDB.\n\nAll movie and TV metadata, backdrops, and posters are provided courtesy of The Movie Database (TMDB). TMDB is free for non-commercial personal use."
+            textSize = 12f
+            setTextColor(0xFFC7CCD6.toInt())
+            gravity = Gravity.CENTER
+            lineHeight = dp(18)
+            setPadding(0, dp(14), 0, dp(24))
+        }
+        layout.addView(descTv)
+
+        val btnClose = TextView(this).apply {
+            text = "Close"
+            textSize = 13f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            background = GradientDrawable().apply {
+                setColor(0xFF8B7CFF.toInt())
+                cornerRadius = dp(12).toFloat()
+            }
+            setPadding(dp(28), dp(10), dp(28), dp(10))
+            isFocusable = true
+            isClickable = true
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            setOnClickListener { dialog.dismiss() }
+        }
+        TvFocusHelper.attach(btnClose, cornerRadiusPx = dp(12).toFloat(), isButton = true)
+        layout.addView(btnClose)
+
+        dialog.setContentView(layout)
+        dialog.show()
+        btnClose.requestFocus()
     }
 
     /** Wallpapers page, framed by "Add from phone…" first and, once there are photos, "Remove a photo…" last. */
@@ -1697,9 +1894,56 @@ class MainActivity : Activity() {
                 showWatchNext(watchList)
                 renderSettings(R.string.show_icons)
             },
+            R.string.banner_window to { d ->
+                val current = prefs.getInt("banner_window_days", 90)
+                val next = when (current) {
+                    30 -> if (d > 0) 90 else 180
+                    90 -> if (d > 0) 180 else 30
+                    else -> if (d > 0) 30 else 90
+                }
+                prefs.edit().putInt("banner_window_days", next).apply()
+                fetchTmdbHero()
+                renderSettings(R.string.banner_window)
+            },
+            R.string.watch_check_onyx to { _ ->
+                val cur = prefs.getBoolean("watch_check_onyx", prefs.getBoolean("watch_check_nyx", true))
+                prefs.edit().putBoolean("watch_check_onyx", !cur).apply()
+                renderSettings(R.string.watch_check_onyx)
+            },
+            R.string.watch_check_nyx to { _ ->
+                val cur = prefs.getBoolean("watch_check_onyx", prefs.getBoolean("watch_check_nyx", true))
+                prefs.edit().putBoolean("watch_check_onyx", !cur).apply()
+                renderSettings(R.string.watch_check_onyx)
+            },
+            R.string.watch_original_title to { _ ->
+                val cur = prefs.getBoolean("watch_original_title", false)
+                prefs.edit().putBoolean("watch_original_title", !cur).apply()
+                renderSettings(R.string.watch_original_title)
+            },
+            R.string.perf_mode to { d ->
+                val current = dev.plume.DeviceTier.getPerformanceMode(this)
+                val modes = listOf(
+                    dev.plume.PerformanceMode.AUTO,
+                    dev.plume.PerformanceMode.QUALITY,
+                    dev.plume.PerformanceMode.PERFORMANCE
+                )
+                val nextIdx = (modes.indexOf(current) + (if (d > 0) 1 else -1) + modes.size) % modes.size
+                dev.plume.DeviceTier.setPerformanceMode(this, modes[nextIdx])
+                renderSettings(R.string.perf_mode)
+            },
         )
         val rows = linkedMapOf<Int, Triple<String, String, () -> Unit>>(
             R.string.edit_apps_row to Triple(getString(R.string.edit_apps_row), "") { closeLauncherSettings(); startEdit(grab = null) },
+            R.string.perf_mode to Triple(
+                getString(R.string.perf_mode),
+                when (dev.plume.DeviceTier.getPerformanceMode(this)) {
+                    dev.plume.PerformanceMode.AUTO -> getString(R.string.perf_mode_auto, dev.plume.DeviceTier.getTier(this).name)
+                    dev.plume.PerformanceMode.QUALITY -> getString(R.string.perf_mode_quality)
+                    dev.plume.PerformanceMode.PERFORMANCE -> getString(R.string.perf_mode_performance)
+                }
+            ) {
+                steps[R.string.perf_mode]!!(1)
+            },
             R.string.theme to Triple(getString(R.string.theme), getString(mapOf("light" to R.string.theme_light, "dark" to R.string.theme_dark, "auto" to R.string.theme_auto)[theme] ?: R.string.theme_light)) {
                 steps[R.string.theme]!!(1)
             },
@@ -1794,6 +2038,24 @@ class MainActivity : Activity() {
                 prefs.edit().remove("lock_pin").apply()
                 renderSettings(R.string.lock_layout)
             },
+            R.string.tmdb_token to Triple(getString(R.string.tmdb_token), if (getTmdbToken().isNotBlank()) "Configured" else "Not set") {
+                showTmdbTokenDialog()
+            },
+            R.string.banner_window to Triple(getString(R.string.banner_window), "${prefs.getInt("banner_window_days", 90)} days") {
+                steps[R.string.banner_window]!!(1)
+            },
+            R.string.watch_check_onyx to Triple(getString(R.string.watch_check_onyx), toggle(prefs.getBoolean("watch_check_onyx", prefs.getBoolean("watch_check_nyx", true)))) {
+                steps[R.string.watch_check_onyx]!!(1)
+            },
+            R.string.watch_check_nyx to Triple(getString(R.string.watch_check_onyx), toggle(prefs.getBoolean("watch_check_onyx", prefs.getBoolean("watch_check_nyx", true)))) {
+                steps[R.string.watch_check_onyx]!!(1)
+            },
+            R.string.watch_original_title to Triple(getString(R.string.watch_original_title), toggle(prefs.getBoolean("watch_original_title", false))) {
+                steps[R.string.watch_original_title]!!(1)
+            },
+            R.string.tmdb_attribution to Triple(getString(R.string.tmdb_attribution), "About TMDB") {
+                showTmdbAttributionDialog()
+            },
         )
         for (k in listOf(R.string.sort_apps, R.string.weather_units)) steps[k] = { rows[k]!!.third() }
         // Like the layout: behind the PIN. unlock() closes the panel after the PIN, so open it again.
@@ -1816,6 +2078,8 @@ class MainActivity : Activity() {
                 listOfNotNull(R.string.theme, R.string.light_wallpaper, R.string.dark_wallpaper, R.string.wp_dim.takeIf { dimmed }, R.string.fade_top.takeIf { photo },
                     R.string.fade_bottom.takeIf { photo }, R.string.glass, R.string.app_animations,
                     R.string.folder_photo_changes.takeIf { folder || shows }, R.string.wp_sources.takeIf { shows })),
+            Triple(R.string.section_content, "TMDB · Watch",
+                listOf(R.string.tmdb_token, R.string.banner_window, R.string.watch_check_onyx, R.string.watch_original_title, R.string.tmdb_attribution)),
             Triple(R.string.section_clock_weather, if (weather == "off") on(false) else "${rows[R.string.weather_units]!!.second} · ${rows[R.string.weather_location]!!.second}",
                 listOf(R.string.weather, R.string.weather_units, R.string.weather_location)),
             Triple(R.string.section_app_row, "${rows[R.string.apps_in_row]!!.second} · ${rows[R.string.row_position]!!.second}",
@@ -2489,39 +2753,30 @@ class MainActivity : Activity() {
 
     private fun renderApps() {
         val focusedTag = currentFocus?.tag
-        // Rebuilds can happen in the background (an app or HDMI device added); only take focus if the row had it.
-        // First fill after a cold start: Android already gave the default focus to the top bar's first icon.
-        val firstFill = appRow.childCount == 0 && currentFocus?.parent === wifi.parent
+        val firstFill = appRow.childCount == 0
         val takeFocus = currentFocus == null || currentFocus?.parent === appRow || firstFill
-        val gap = dp(GRID_GAP)
-        val width = rowTileWidth()
-        val tileH = if (isBannerStyle(iconStyle())) width * 9 / 16 else dp(76) // 16:9 like a banner
-        // The row sits on the bottom of its space. A banner row is shorter, so lift it by half the difference: its
-        // centre stays where the card row's is, between the clock and Continue Watching.
-        findViewById<View>(R.id.appScroll).apply {
-            (layoutParams as LinearLayout.LayoutParams).bottomMargin = dp(-24) + (dp(76) - tileH) / 2
-            requestLayout()
-        }
+
         appRow.removeAllViews()
+
+        // 1. First item: Onyx Entertainment Tile (always first, 5 states supported)
+        val onyxTile = createOnyxTileView()
+        appRow.addView(onyxTile)
+
+        // 2. Installed App Banners (16:9 Leanback banners, 252x134px = 126x67dp, 20px = 10dp apart)
         val hidden = rowHiddenSet()
-        val tiles = sortedApps().filter { inRow(it.pkg, hidden) }.map { appTile(it, labeled = false) }
-        if (tiles.isEmpty()) return showNames()
-        tiles.forEachIndexed { i, t ->
-            t.id = View.generateViewId()
-            appRow.addView(t, LinearLayout.LayoutParams(width, tileH).apply { if (i > 0) marginStart = gap })
-            val own = t.onFocusChangeListener
-            t.setOnFocusChangeListener { v, focused ->
-                own.onFocusChange(v, focused)
-                if (focused) lastApp = v
-                showRowLabel(v, focused)
-            }
+        val visibleApps = sortedApps().filter { inRow(it.pkg, hidden) && it.pkg != "com.onyxtv.app" && it.pkg != "com.onyxtv.app.debug" && it.pkg != "com.nyxplayer.app" }
+        for (app in visibleApps) {
+            val tile = createAppBannerTile(app)
+            appRow.addView(tile)
         }
-        showNames()
-        alignRow()
-        if (takeFocus) (tiles.firstOrNull { it.tag == focusedTag } ?: tiles[0]).requestFocus()
-        if (!prefs.getBoolean("tip_move", false)) {
-            prefs.edit().putBoolean("tip_move", true).apply()
-            toast(getString(R.string.tip_move), long = true)
+
+        // 3. "All apps" tile at the end of the row
+        val allAppsTile = createAllAppsTile()
+        appRow.addView(allAppsTile)
+
+        if (takeFocus) {
+            val toFocus = (0 until appRow.childCount).map { appRow.getChildAt(it) }.firstOrNull { it.tag == focusedTag } ?: onyxTile
+            toFocus.requestFocus()
         }
     }
 
@@ -2836,6 +3091,18 @@ class MainActivity : Activity() {
             appRow.getChildAt(0)?.requestFocus()
             return true
         }
+        if (e.keyCode == KeyEvent.KEYCODE_BACK && e.action == KeyEvent.ACTION_DOWN) {
+            val toast = findViewById<View>(R.id.launchFailureToast)
+            if (toast?.visibility == View.VISIBLE) {
+                hideLaunchFailureToast()
+                onyxTileView?.requestFocus()
+                return true
+            }
+            if (currentTab != "home") {
+                switchTab("home")
+                return true
+            }
+        }
         val isDpad = e.keyCode == KeyEvent.KEYCODE_DPAD_LEFT || e.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT ||
             e.keyCode == KeyEvent.KEYCODE_DPAD_UP || e.keyCode == KeyEvent.KEYCODE_DPAD_DOWN
         if (isDpad && e.action == KeyEvent.ACTION_DOWN) {
@@ -2882,36 +3149,128 @@ class MainActivity : Activity() {
      * let Android handle the key.
      */
     private fun homeNav(v: View, key: Int): View? {
-        fun alive(x: View?) = x?.takeIf { it.isAttachedToWindow }
-        val apps = alive(lastApp)?.takeIf { it.parent === appRow } ?: appRow.getChildAt(0)
-        val cards = if (watchScroll.visibility != View.VISIBLE) null
-            else alive(lastCard) ?: (watchRow.getChildAt(0) as? ViewGroup)?.getChildAt(0)
-        val top = alive(lastTop) ?: findViewById(R.id.launcherSettings)
+        val heroWatch = findViewById<View>(R.id.heroWatchButton)
+        val heroMoreInfo = findViewById<View>(R.id.heroMoreInfoButton)
+        val tabs = listOf(
+            findViewById<View>(R.id.tabHome),
+            findViewById<View>(R.id.tabLiveTv),
+            findViewById<View>(R.id.tabMovies),
+            findViewById<View>(R.id.tabSeries),
+            findViewById<View>(R.id.tabFavorites)
+        ).filterNotNull()
+        val actions = shownTop().mapNotNull { findViewById<View>(it) }
+        val apps = (0 until appRow.childCount).map { appRow.getChildAt(it) }
+
         return when {
-            v.parent === wifi.parent -> when (key) { // top bar
-                KeyEvent.KEYCODE_DPAD_DOWN -> apps ?: cards ?: v // the apps row can be empty (all hidden)
-                KeyEvent.KEYCODE_DPAD_UP -> v
-                KeyEvent.KEYCODE_DPAD_LEFT -> if (v.id == shownTop().first()) v else null
-                KeyEvent.KEYCODE_DPAD_RIGHT -> if (v.id == shownTop().last()) v else null
-                else -> null
-            }
-            v.parent === appRow -> {
-                val idx = appRow.indexOfChild(v)
+            v in tabs -> {
+                val idx = tabs.indexOf(v)
                 when (key) {
-                    KeyEvent.KEYCODE_DPAD_UP -> top
-                    KeyEvent.KEYCODE_DPAD_DOWN -> cards ?: v
-                    KeyEvent.KEYCODE_DPAD_LEFT -> if (idx > 0) appRow.getChildAt(idx - 1) else v
-                    KeyEvent.KEYCODE_DPAD_RIGHT -> if (idx < appRow.childCount - 1) appRow.getChildAt(idx + 1) else v
+                    KeyEvent.KEYCODE_DPAD_LEFT -> if (idx > 0) tabs[idx - 1] else v
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> if (idx < tabs.size - 1) tabs[idx + 1] else (actions.firstOrNull() ?: v)
+                    KeyEvent.KEYCODE_DPAD_DOWN -> {
+                        when (v.id) {
+                            R.id.tabLiveTv -> {
+                                if (currentTab != "live") switchTab("live")
+                                liveTvGuideView ?: v
+                            }
+                            R.id.tabMovies -> {
+                                if (currentTab != "movies") switchTab("movies")
+                                browseView?.getTopFocusable() ?: v
+                            }
+                            R.id.tabSeries -> {
+                                if (currentTab != "series") switchTab("series")
+                                browseView?.getTopFocusable() ?: v
+                            }
+                            R.id.tabHome -> {
+                                if (currentTab != "home") switchTab("home")
+                                heroWatch?.takeIf { it.visibility == View.VISIBLE } ?: apps.firstOrNull() ?: v
+                            }
+                            else -> {
+                                if (currentTab == "live") {
+                                    liveTvGuideView ?: v
+                                } else if (currentTab == "movies" || currentTab == "series") {
+                                    browseView?.getTopFocusable() ?: v
+                                } else {
+                                    heroWatch?.takeIf { it.visibility == View.VISIBLE } ?: apps.firstOrNull() ?: v
+                                }
+                            }
+                        }
+                    }
+                    KeyEvent.KEYCODE_DPAD_UP -> v
                     else -> null
                 }
             }
-            v.getTag(R.id.watchRow) is Prog -> {
-                val i = watchRow.indexOfChild(v.parent as View)
+            v in actions -> {
+                val idx = actions.indexOf(v)
                 when (key) {
-                    KeyEvent.KEYCODE_DPAD_UP -> apps ?: top
+                    KeyEvent.KEYCODE_DPAD_LEFT -> if (idx > 0) actions[idx - 1] else (tabs.lastOrNull() ?: v)
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> if (idx < actions.size - 1) actions[idx + 1] else v
+                    KeyEvent.KEYCODE_DPAD_DOWN -> {
+                        when (v.id) {
+                            R.id.tabLiveTv -> {
+                                if (currentTab != "live") switchTab("live")
+                                liveTvGuideView ?: v
+                            }
+                            R.id.tabMovies -> {
+                                if (currentTab != "movies") switchTab("movies")
+                                browseView?.getTopFocusable() ?: v
+                            }
+                            R.id.tabSeries -> {
+                                if (currentTab != "series") switchTab("series")
+                                browseView?.getTopFocusable() ?: v
+                            }
+                            R.id.tabHome -> {
+                                if (currentTab != "home") switchTab("home")
+                                heroWatch?.takeIf { it.visibility == View.VISIBLE } ?: apps.firstOrNull() ?: v
+                            }
+                            else -> {
+                                if (currentTab == "live") {
+                                    liveTvGuideView ?: v
+                                } else if (currentTab == "movies" || currentTab == "series") {
+                                    browseView?.getTopFocusable() ?: v
+                                } else {
+                                    heroWatch?.takeIf { it.visibility == View.VISIBLE } ?: apps.firstOrNull() ?: v
+                                }
+                            }
+                        }
+                    }
+                    KeyEvent.KEYCODE_DPAD_UP -> v
+                    else -> null
+                }
+            }
+            v === heroWatch -> {
+                when (key) {
+                    KeyEvent.KEYCODE_DPAD_UP -> tabs.firstOrNull() ?: v
+                    KeyEvent.KEYCODE_DPAD_DOWN -> apps.firstOrNull() ?: v
+                    KeyEvent.KEYCODE_DPAD_LEFT -> {
+                        rotateHeroPrevious()
+                        v
+                    }
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                        if (heroMoreInfo != null && heroMoreInfo.visibility == View.VISIBLE) heroMoreInfo else v
+                    }
+                    else -> null
+                }
+            }
+            v === heroMoreInfo -> {
+                when (key) {
+                    KeyEvent.KEYCODE_DPAD_UP -> tabs.firstOrNull() ?: v
+                    KeyEvent.KEYCODE_DPAD_DOWN -> apps.firstOrNull() ?: v
+                    KeyEvent.KEYCODE_DPAD_LEFT -> heroWatch ?: v
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                        rotateHeroNext()
+                        v
+                    }
+                    else -> null
+                }
+            }
+            v.parent === appRow -> {
+                val idx = apps.indexOf(v)
+                when (key) {
+                    KeyEvent.KEYCODE_DPAD_UP -> heroWatch?.takeIf { it.visibility == View.VISIBLE } ?: tabs.firstOrNull() ?: v
                     KeyEvent.KEYCODE_DPAD_DOWN -> v
-                    KeyEvent.KEYCODE_DPAD_LEFT -> if (i > 0) (watchRow.getChildAt(i - 1) as? ViewGroup)?.getChildAt(0) else v
-                    KeyEvent.KEYCODE_DPAD_RIGHT -> if (i < watchRow.childCount - 1) (watchRow.getChildAt(i + 1) as? ViewGroup)?.getChildAt(0) else v
+                    KeyEvent.KEYCODE_DPAD_LEFT -> if (idx > 0) apps[idx - 1] else v
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> if (idx < apps.size - 1) apps[idx + 1] else v
                     else -> null
                 }
             }
@@ -3043,34 +3402,51 @@ class MainActivity : Activity() {
     // ---------- the top bar: hold OK on an icon to move it, hide it, or add one back ----------
 
     /** The bar's icons in their default order, with the key each is saved under. */
-    private val TOP_KEYS = linkedMapOf(R.id.wifi to "wifi", R.id.sourcesButton to "sources", R.id.allAppsButton to "apps",
-        R.id.systemSettings to "system", R.id.launcherSettings to "plume")
+    private val TOP_KEYS = linkedMapOf(
+        R.id.wifi to "wifi",
+        R.id.sourcesButton to "sources",
+        R.id.searchButton to "search",
+        R.id.launcherSettings to "plume"
+    )
 
     private var movingTop: View? = null // the icon being moved, while Left and Right slide it
     private var topLive: List<Int> = emptyList() // the order while moving; saved when OK places the icon
     private var topBefore: List<Int> = emptyList() // the order when the move started, for Back
 
     /** The icons the bar shows, in order: the saved list, or all of them. Plume settings is always on it. */
-    private fun topOrder(): List<Int> =
-        TopBar.parse(prefs.getString("top_bar", null), TOP_KEYS.values.toList(), TOP_KEYS.values.toList(), "plume").map { key -> TOP_KEYS.entries.first { it.value == key }.key }
+    private fun topOrder(): List<Int> {
+        val defaultList = TOP_KEYS.values.toList()
+        val saved = prefs.getString("top_bar_v2", null) ?: prefs.getString("top_bar", null)
+        val parsed = TopBar.parse(saved, defaultList, defaultList, "plume")
+        val withSearch = if ("search" !in parsed) {
+            val list = parsed.toMutableList()
+            val plumeIdx = list.indexOf("plume")
+            if (plumeIdx >= 0) list.add(plumeIdx, "search") else list.add("search")
+            list
+        } else parsed
+        return withSearch.mapNotNull { key -> TOP_KEYS.entries.firstOrNull { it.value == key }?.key }
+    }
 
     /** What is really on screen: Sources stays out while the TV has no input. */
     private fun shownTop(order: List<Int> = topOrder()) = order.filter { it != R.id.sourcesButton || sources.isNotEmpty() }
 
     /** Puts the icons in [order], hides the others, and gives the first one on screen no left margin. */
     private fun applyTopBar(order: List<Int> = topOrder()) {
-        val bar = wifi.parent as LinearLayout
-        // Found before they leave the bar: findViewById cannot see a view that has been removed.
-        val views = TOP_KEYS.keys.associateWith { findViewById<View>(it) }
-        val start = views.values.minOf { bar.indexOfChild(it) }
-        views.values.forEach { bar.removeView(it) }
+        val bar = wifi.parent as? LinearLayout ?: return
+        val views = TOP_KEYS.keys.mapNotNull { id -> findViewById<View>(id)?.let { id to it } }.toMap()
+        val existingChildren = views.values.filter { it.parent == bar }
+        val start = if (existingChildren.isNotEmpty()) existingChildren.minOf { bar.indexOfChild(it) } else 0
+        existingChildren.forEach { bar.removeView(it) }
         val shown = shownTop(order)
         (order + (TOP_KEYS.keys - order.toSet())).forEachIndexed { i, id ->
-            val v = views.getValue(id)
-            val lp = v.layoutParams as LinearLayout.LayoutParams
+            val v = views[id] ?: return@forEachIndexed
+            val lp = (v.layoutParams as? LinearLayout.LayoutParams) ?: LinearLayout.LayoutParams(dp(28), dp(28))
             lp.marginStart = if (id == shown.firstOrNull()) 0 else dp(8)
+            v.layoutParams = lp
             v.visibility = if (id in shown) View.VISIBLE else View.GONE
-            bar.addView(v, start + i, lp)
+            if (v.parent == null) {
+                bar.addView(v, Math.min(start + i, bar.childCount), lp)
+            }
         }
     }
 
@@ -3080,7 +3456,7 @@ class MainActivity : Activity() {
 
     private fun keyList(ids: List<Int>) = ids.map { TOP_KEYS.getValue(it) }
 
-    private fun keys(list: List<String>) = list.map { key -> TOP_KEYS.entries.first { it.value == key }.key }
+    private fun keys(list: List<String>) = list.mapNotNull { key -> TOP_KEYS.entries.firstOrNull { it.value == key }?.key }
 
     /** Hold OK on a top-bar icon: Move, Hide (not Plume settings, so the bar is never empty) and Add icon. */
     private fun topMenu(v: View) {
@@ -3094,6 +3470,9 @@ class MainActivity : Activity() {
     }
 
     private fun hideTop(v: View) {
+        if (v.id == R.id.iptvButton) {
+            prefs.edit().putBoolean("iptv_hidden", true).apply()
+        }
         val order = topOrder()
         val shown = shownTop(order)
         val next = shown.getOrNull(shown.indexOf(v.id) + 1) ?: shown.getOrNull(shown.indexOf(v.id) - 1)
@@ -3122,6 +3501,9 @@ class MainActivity : Activity() {
     }
 
     private fun addTopIcon(id: Int, after: View) {
+        if (id == R.id.iptvButton) {
+            prefs.edit().remove("iptv_hidden").apply()
+        }
         topBefore = topOrder()
         topLive = keys(TopBar.addAfter(keyList(topBefore), TOP_KEYS.getValue(id), TOP_KEYS.getValue(after.id)))
         applyTopBar(topLive)
@@ -3334,6 +3716,7 @@ class MainActivity : Activity() {
 
     /** The tile or card that [key] names, with the cards built up to it; null when it left the rows (uninstalled, hidden, off the list). */
     private fun homeViewFor(key: String): View? {
+        if (key == "top_iptv") return findViewById(R.id.iptvButton)
         (0 until appRow.childCount).map { appRow.getChildAt(it) }.firstOrNull { it.tag == key }?.let { return it }
         val at = watchList.indexOfFirst { cardKey(it) == key }
         if (at < 0) return null
@@ -3363,20 +3746,1291 @@ class MainActivity : Activity() {
         row.animate().scaleX(1f).scaleY(1f).alpha(1f).setStartDelay(90).setDuration(420).setInterpolator(DECELERATE).start()
     }
 
+    // ---------- Plume Phase 2: Design Implementation & Onyx TV Integration ----------
+
+    enum class OnyxState {
+        DEFAULT,
+        NOT_INSTALLED,
+        DISABLED
+    }
+
+    data class HeroItem(
+        val id: String,
+        val title: String,
+        val metadata: String,
+        val genres: List<String>,
+        val synopsis: String,
+        val backdropUri: String? = null,
+        val backdropRes: Int = 0
+    )
+
+    private var onyxTileView: View? = null
+    private var currentHeroIndex = 0
+    private val heroItems = mutableListOf<HeroItem>()
+    private val tmdbHeroItems = mutableListOf<dev.plume.tmdb.TmdbItem>()
+    private val heroRotationHandler = Handler(Looper.getMainLooper())
+    private var heroRotationPaused = false
+    private val toastDismissHandler = Handler(Looper.getMainLooper())
+    private var allAppsSortAz = true
+    private var onyxObserverRegistered = false
+    private var currentTab = "home"
+
+    private lateinit var tmdbCache: dev.plume.tmdb.TmdbCache
+    private lateinit var tmdbClient: dev.plume.tmdb.TmdbClient
+    private lateinit var tmdbImageLoader: dev.plume.tmdb.TmdbImageLoader
+    private lateinit var tmdbRepository: dev.plume.tmdb.TmdbRepository
+    private lateinit var watchHandoffManager: dev.plume.handoff.WatchHandoffManager
+    private lateinit var moreInfoOverlay: dev.plume.browse.MoreInfoOverlay
+    private var browseView: dev.plume.browse.BrowseView? = null
+    private var liveTvGuideView: dev.plume.livetv.LiveTvGuideView? = null
+
+    private fun getHeroRotationInterval(): Long {
+        return if (dev.plume.DeviceTier.isLowTier(this)) 12000L else 8000L
+    }
+
+    private val heroRotationRunnable = object : Runnable {
+        override fun run() {
+            if (!heroRotationPaused && (tmdbHeroItems.isNotEmpty() || heroItems.isNotEmpty()) && !isFinishing) {
+                rotateHero()
+            }
+            if (!heroRotationPaused && !isFinishing) {
+                heroRotationHandler.postDelayed(this, getHeroRotationInterval())
+            }
+        }
+    }
+
+    private val onyxFeaturedObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+        override fun onChange(selfChange: Boolean) {
+            super.onChange(selfChange)
+            queryOnyxFeatured()
+        }
+    }
+
+    private fun getTmdbToken(): String {
+        val userToken = prefs.getString("tmdb_token", null)?.trim()
+        if (!userToken.isNullOrBlank()) return userToken
+        return BuildConfig.TMDB_READ_TOKEN.trim()
+    }
+
+    private fun setupPlumeHomeV2() {
+        // Initialize TMDB & Handoff Layers
+        tmdbCache = dev.plume.tmdb.TmdbCache(this)
+        tmdbClient = dev.plume.tmdb.TmdbClient { getTmdbToken() }
+        tmdbImageLoader = dev.plume.tmdb.TmdbImageLoader(this, tmdbCache)
+        tmdbRepository = dev.plume.tmdb.TmdbRepository(this, tmdbClient, tmdbCache)
+        watchHandoffManager = dev.plume.handoff.WatchHandoffManager(
+            activity = this,
+            onPlayInOnyx = { itemId -> launchOnyx("play", itemId) },
+            onLaunchFailure = { msg -> showLaunchFailureToast(msg) }
+        )
+        moreInfoOverlay = dev.plume.browse.MoreInfoOverlay(
+            activity = this,
+            repository = tmdbRepository,
+            imageLoader = tmdbImageLoader,
+            onWatchClicked = { item -> triggerWatchHandoff(item) }
+        )
+
+        browseView = findViewById(R.id.browseView)
+        browseView?.initDependencies(
+            repository = tmdbRepository,
+            imageLoader = tmdbImageLoader,
+            moreInfoOverlay = moreInfoOverlay,
+            onWatchClicked = { item -> triggerWatchHandoff(item) },
+            onBackToTabs = {
+                when (currentTab) {
+                    "movies" -> findViewById<View>(R.id.tabMovies)?.requestFocus()
+                    "series" -> findViewById<View>(R.id.tabSeries)?.requestFocus()
+                    else -> findViewById<View>(R.id.tabHome)?.requestFocus()
+                }
+            },
+            onAmbientBackdropChanged = { backdropPath ->
+                loadAmbientBackdrop(backdropPath)
+            }
+        )
+
+        liveTvGuideView = findViewById(R.id.liveTvGuideView)
+        liveTvGuideView?.onBackToTopBar = {
+            findViewById<View>(R.id.tabLiveTv)?.requestFocus()
+        }
+
+        // Setup Top Navigation Tabs
+        val tabHome = findViewById<TextView>(R.id.tabHome)
+        val tabLiveTv = findViewById<TextView>(R.id.tabLiveTv)
+        val tabMovies = findViewById<TextView>(R.id.tabMovies)
+        val tabSeries = findViewById<TextView>(R.id.tabSeries)
+        val tabFavorites = findViewById<TextView>(R.id.tabFavorites)
+
+        tabHome?.setOnClickListener { switchTab("home") }
+        tabLiveTv?.setOnClickListener { switchTab("live") }
+        tabMovies?.setOnClickListener { switchTab("movies") }
+        tabSeries?.setOnClickListener { switchTab("series") }
+        tabFavorites?.setOnClickListener { launchOnyx("favorites") }
+
+        listOf(tabHome, tabLiveTv, tabMovies, tabSeries, tabFavorites).forEach { tab ->
+            tab?.let {
+                TvFocusHelper.attach(it, cornerRadiusPx = dp(999).toFloat(), isButton = false, isPill = true)
+            }
+        }
+
+        // Setup Top Right Action Buttons: Wi-Fi, Inputs, Search, Settings
+        val wifiBtn = findViewById<ImageView>(R.id.wifi)
+        val sourcesBtn = findViewById<ImageView>(R.id.sourcesButton)
+        val searchBtn = findViewById<ImageView>(R.id.searchButton)
+        val settingsBtn = findViewById<ImageView>(R.id.launcherSettings)
+
+        wifiBtn?.setOnClickListener { unlock { openSettings(Settings.ACTION_WIFI_SETTINGS) } }
+        sourcesBtn?.setOnClickListener { showSources(it) }
+        searchBtn?.setOnClickListener { openAllApps() }
+        settingsBtn?.setOnClickListener { unlock { openLauncherSettings() } }
+
+        // Inputs button shown only if TV input sources exist
+        sourcesBtn?.visibility = if (sources.isNotEmpty()) View.VISIBLE else View.GONE
+
+        listOf(wifiBtn, sourcesBtn, searchBtn, settingsBtn).forEach { btn ->
+            btn?.let {
+                TvFocusHelper.attach(it, cornerRadiusPx = dp(14).toFloat(), isButton = true, isCircle = true)
+            }
+        }
+
+        // Explicit D-pad navigation between tabs and action buttons
+        tabHome?.nextFocusRightId = R.id.tabLiveTv
+        tabLiveTv?.nextFocusLeftId = R.id.tabHome
+        tabLiveTv?.nextFocusRightId = R.id.tabMovies
+        tabMovies?.nextFocusLeftId = R.id.tabLiveTv
+        tabMovies?.nextFocusRightId = R.id.tabSeries
+        tabSeries?.nextFocusLeftId = R.id.tabMovies
+        tabSeries?.nextFocusRightId = R.id.tabFavorites
+        tabFavorites?.nextFocusLeftId = R.id.tabSeries
+        tabFavorites?.nextFocusRightId = if (wifiBtn?.visibility == View.VISIBLE) R.id.wifi else R.id.searchButton
+
+        wifiBtn?.nextFocusLeftId = R.id.tabFavorites
+        wifiBtn?.nextFocusRightId = if (sourcesBtn?.visibility == View.VISIBLE) R.id.sourcesButton else R.id.searchButton
+        sourcesBtn?.nextFocusLeftId = R.id.wifi
+        sourcesBtn?.nextFocusRightId = R.id.searchButton
+        searchBtn?.nextFocusLeftId = if (sourcesBtn?.visibility == View.VISIBLE) R.id.sourcesButton else (if (wifiBtn?.visibility == View.VISIBLE) R.id.wifi else R.id.tabFavorites)
+        searchBtn?.nextFocusRightId = R.id.launcherSettings
+        settingsBtn?.nextFocusLeftId = R.id.searchButton
+
+        listOf(tabHome, tabLiveTv, tabMovies, tabSeries, tabFavorites, wifiBtn, sourcesBtn, searchBtn, settingsBtn).forEach {
+            it?.nextFocusDownId = R.id.heroWatchButton
+        }
+
+        // Setup Hero Watch Button and More Info Button
+        val heroWatchBtn = findViewById<TextView>(R.id.heroWatchButton)
+        val heroMoreInfoBtn = findViewById<TextView>(R.id.heroMoreInfoButton)
+
+        heroWatchBtn?.nextFocusUpId = R.id.tabHome
+        heroWatchBtn?.nextFocusRightId = R.id.heroMoreInfoButton
+        heroMoreInfoBtn?.nextFocusLeftId = R.id.heroWatchButton
+        heroMoreInfoBtn?.nextFocusUpId = R.id.tabHome
+
+        heroWatchBtn?.setOnKeyListener { _, keyCode, event ->
+            if (event.action == KeyEvent.ACTION_DOWN) {
+                when (keyCode) {
+                    KeyEvent.KEYCODE_DPAD_LEFT -> {
+                        rotateHeroPrevious()
+                        true
+                    }
+                    KeyEvent.KEYCODE_DPAD_DOWN -> {
+                        onyxTileView?.requestFocus() ?: (if (appRow.childCount > 0) appRow.getChildAt(0).requestFocus() else false)
+                        true
+                    }
+                    else -> false
+                }
+            } else false
+        }
+        heroWatchBtn?.setOnClickListener {
+            val tmdbItem = tmdbHeroItems.getOrNull(currentHeroIndex)
+            if (tmdbItem != null) {
+                triggerWatchHandoff(tmdbItem)
+            } else {
+                val item = heroItems.getOrNull(currentHeroIndex)
+                launchOnyx(destination = "play", itemId = item?.id)
+            }
+        }
+        heroWatchBtn?.let {
+            TvFocusHelper.attach(it, isButton = true, isPill = true) { focused ->
+                if (focused) pauseHeroRotation() else resumeHeroRotation()
+            }
+        }
+
+        heroMoreInfoBtn?.setOnKeyListener { _, keyCode, event ->
+            if (event.action == KeyEvent.ACTION_DOWN) {
+                when (keyCode) {
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                        rotateHeroNext()
+                        true
+                    }
+                    KeyEvent.KEYCODE_DPAD_DOWN -> {
+                        onyxTileView?.requestFocus() ?: (if (appRow.childCount > 0) appRow.getChildAt(0).requestFocus() else false)
+                        true
+                    }
+                    else -> false
+                }
+            } else false
+        }
+        heroMoreInfoBtn?.setOnClickListener {
+            val tmdbItem = tmdbHeroItems.getOrNull(currentHeroIndex)
+            if (tmdbItem != null) {
+                moreInfoOverlay.show(tmdbItem, heroMoreInfoBtn)
+            }
+        }
+        heroMoreInfoBtn?.let {
+            TvFocusHelper.attach(it, isButton = true, isPill = true) { focused ->
+                if (focused) pauseHeroRotation() else resumeHeroRotation()
+            }
+        }
+
+        // Setup Default Hero Items as initial fallback
+        setupDefaultHeroItems()
+        findViewById<ImageView>(R.id.wallpaper)?.setImageResource(heroItems[0].backdropRes)
+        updateHeroUi(heroItems[0], animated = false)
+        startHeroRotation()
+
+        // Fetch Live TMDB Hero Items (rated > 7.0) - deferred by 500ms for instant initial draw
+        window.decorView.postDelayed({
+            if (!isFinishing && !isDestroyed) {
+                fetchTmdbHero()
+            }
+        }, 500L)
+
+        // Setup All Apps Controls (Page 1)
+        val sortBtn = findViewById<TextView>(R.id.allAppsSortButton)
+        sortBtn?.setOnClickListener {
+            allAppsSortAz = !allAppsSortAz
+            sortBtn.text = getString(if (allAppsSortAz) R.string.sort_az else R.string.sort_usage)
+            openAllApps()
+        }
+        sortBtn?.let { TvFocusHelper.attach(it, cornerRadiusPx = dp(999).toFloat(), isButton = false, isPill = true) }
+
+        val editBtn = findViewById<TextView>(R.id.allAppsEditButton)
+        editBtn?.setOnClickListener {
+            closeAllApps()
+            startEdit(null)
+        }
+        editBtn?.let { TvFocusHelper.attach(it, cornerRadiusPx = dp(999).toFloat(), isButton = false, isPill = true) }
+
+        // Setup Failure Toast Retry Button
+        val toastRetry = findViewById<TextView>(R.id.toastRetryButton)
+        toastRetry?.setOnClickListener {
+            hideLaunchFailureToast()
+            launchOnyx()
+        }
+        toastRetry?.let { TvFocusHelper.attach(it, cornerRadiusPx = dp(999).toFloat(), isButton = true, isPill = true) }
+
+        // Setup Apps Tray Outline Clipping to prevent items from bleeding outside border when scrolling
+        findViewById<View>(R.id.appsTray)?.apply {
+            outlineProvider = ViewOutlineProvider.BACKGROUND
+            clipToOutline = true
+        }
+    }
+
+    private fun switchTab(targetTab: String) {
+        if (currentTab == targetTab && targetTab != "home") return
+        currentTab = targetTab
+
+        val tabHome = findViewById<TextView>(R.id.tabHome)
+        val tabLiveTv = findViewById<TextView>(R.id.tabLiveTv)
+        val tabMovies = findViewById<TextView>(R.id.tabMovies)
+        val tabSeries = findViewById<TextView>(R.id.tabSeries)
+        val tabFavorites = findViewById<TextView>(R.id.tabFavorites)
+
+        val heroContainer = findViewById<View>(R.id.heroContainer)
+        val heroDots = findViewById<View>(R.id.heroDotsContainer)
+        val appsSection = findViewById<View>(R.id.appsSection)
+        val bv = browseView ?: findViewById(R.id.browseView)
+        val ltgv = liveTvGuideView ?: findViewById(R.id.liveTvGuideView)
+
+        fun styleTab(tv: TextView?, selected: Boolean) {
+            tv ?: return
+            if (selected) {
+                tv.setBackgroundResource(R.drawable.bg_pill_tab_selected)
+                tv.setTextColor(getColor(R.color.pill_selected_text))
+            } else {
+                tv.setBackgroundResource(R.drawable.bg_pill_tab_unselected)
+                tv.setTextColor(getColor(R.color.text_secondary))
+            }
+        }
+
+        styleTab(tabHome, targetTab == "home")
+        styleTab(tabLiveTv, targetTab == "live")
+        styleTab(tabMovies, targetTab == "movies")
+        styleTab(tabSeries, targetTab == "series")
+        styleTab(tabFavorites, false)
+
+        when (targetTab) {
+            "home" -> {
+                ltgv?.onTabUnselected()
+                bv?.visibility = View.GONE
+                heroContainer?.visibility = View.VISIBLE
+                heroDots?.visibility = View.VISIBLE
+                appsSection?.visibility = View.VISIBLE
+                findViewById<View>(R.id.gradientOverlay)?.visibility = View.VISIBLE
+                if (tmdbHeroItems.isNotEmpty() && currentHeroIndex in tmdbHeroItems.indices) {
+                    val heroItem = tmdbHeroItems[currentHeroIndex]
+                    loadAmbientBackdrop(heroItem.backdropPath)
+                }
+                resumeHeroRotation()
+                if (appRow.childCount > 0) appRow.getChildAt(0).requestFocus()
+            }
+            "live" -> {
+                pauseHeroRotation()
+                heroContainer?.visibility = View.GONE
+                heroDots?.visibility = View.GONE
+                appsSection?.visibility = View.GONE
+                bv?.visibility = View.GONE
+                findViewById<ImageView>(R.id.wallpaper)?.setImageDrawable(ColorDrawable(Color.parseColor("#090B10")))
+                findViewById<View>(R.id.gradientOverlay)?.visibility = View.GONE
+                ltgv?.onTabSelected()
+                ltgv?.post { ltgv.requestFocus() }
+            }
+            "movies" -> {
+                ltgv?.onTabUnselected()
+                pauseHeroRotation()
+                heroContainer?.visibility = View.GONE
+                heroDots?.visibility = View.GONE
+                appsSection?.visibility = View.GONE
+                findViewById<View>(R.id.gradientOverlay)?.visibility = View.VISIBLE
+                bv?.visibility = View.VISIBLE
+                bv?.setMediaType("movie")
+                bv?.post { bv.getTopFocusable()?.requestFocus() }
+            }
+            "series" -> {
+                ltgv?.onTabUnselected()
+                pauseHeroRotation()
+                heroContainer?.visibility = View.GONE
+                heroDots?.visibility = View.GONE
+                appsSection?.visibility = View.GONE
+                findViewById<View>(R.id.gradientOverlay)?.visibility = View.VISIBLE
+                bv?.visibility = View.VISIBLE
+                bv?.setMediaType("tv")
+                bv?.post { bv.getTopFocusable()?.requestFocus() }
+            }
+        }
+    }
+
+    private fun loadAmbientBackdrop(backdropPath: String?) {
+        if (backdropPath.isNullOrBlank()) return
+        val wallpaperView = findViewById<ImageView>(R.id.wallpaper) ?: return
+        val isLowTier = dev.plume.DeviceTier.isLowTier(this)
+        val (targetW, targetH) = if (isLowTier) 960 to 540 else 1920 to 1080
+
+        tmdbImageLoader.load(backdropPath, dev.plume.tmdb.TmdbImageLoader.SIZE_BACKDROP, targetW, targetH) { bmp ->
+            if (bmp != null) {
+                runOnUiThread {
+                    val newDrawable = BitmapDrawable(resources, bmp)
+                    if (isLowTier) {
+                        // Instant swap without TransitionDrawable on low tier to avoid dual 1080p GPU texture memory spikes
+                        wallpaperView.setImageDrawable(newDrawable)
+                    } else {
+                        val oldDrawable = wallpaperView.drawable
+                        val actualOld = if (oldDrawable is TransitionDrawable) oldDrawable.getDrawable(1) else oldDrawable
+                        if (actualOld != null) {
+                            val td = TransitionDrawable(arrayOf(actualOld, newDrawable)).apply {
+                                isCrossFadeEnabled = true
+                            }
+                            wallpaperView.setImageDrawable(td)
+                            td.startTransition(250)
+                        } else {
+                            wallpaperView.setImageDrawable(newDrawable)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun triggerWatchHandoff(item: dev.plume.tmdb.TmdbItem) {
+        val checkOnyx = prefs.getBoolean("watch_check_onyx", prefs.getBoolean("watch_check_nyx", true))
+        val useOriginal = prefs.getBoolean("watch_original_title", false)
+        watchHandoffManager.handleWatch(
+            title = item.title,
+            originalTitle = item.originalTitle,
+            year = item.year.toIntOrNull(),
+            checkOnyxFirst = checkOnyx,
+            useOriginalTitle = useOriginal
+        )
+    }
+
+    private fun fetchTmdbHero() {
+        val window = prefs.getInt("banner_window_days", 90)
+        tmdbRepository.getHomeHeroItems(
+            windowDays = window,
+            minRating = 7.0,
+            minMovieVotes = 100,
+            minTvVotes = 50
+        ) { items ->
+            if (items.isNotEmpty()) {
+                tmdbHeroItems.clear()
+                tmdbHeroItems.addAll(items)
+                currentHeroIndex = 0
+                if (currentTab == "home") {
+                    updateTmdbHeroUi(items[0], animated = false)
+                }
+            }
+        }
+    }
+
+    private fun updateTmdbHeroUi(item: dev.plume.tmdb.TmdbItem, animated: Boolean = true) {
+        val heroTitle = findViewById<TextView>(R.id.heroTitle) ?: return
+        val heroLogo = findViewById<ImageView>(R.id.heroLogoImageView)
+        val heroEyebrow = findViewById<TextView>(R.id.heroEyebrow)
+        val heroMeta = findViewById<TextView>(R.id.heroMetadata)
+        val heroGauge = findViewById<dev.plume.tmdb.RatingGaugeView>(R.id.heroRatingGauge)
+        val heroSynopsis = findViewById<TextView>(R.id.heroSynopsis)
+        val heroGenres = findViewById<LinearLayout>(R.id.heroGenresContainer)
+        val wallpaperView = findViewById<ImageView>(R.id.wallpaper)
+
+        val am = getSystemService(ActivityManager::class.java)
+        val isLowRam = am?.isLowRamDevice == true
+        val duration = if (isLowRam) 200L else 400L
+
+        // Eyebrow
+        heroEyebrow?.text = "NEW & TOP RATED · ${item.mediaType.uppercase()}"
+
+        // Title and Logo
+        if (!item.logoPath.isNullOrBlank() && heroLogo != null) {
+            tmdbImageLoader.load(item.logoPath, dev.plume.tmdb.TmdbImageLoader.SIZE_LOGO) { bmp ->
+                if (bmp != null) {
+                    heroLogo.setImageBitmap(bmp)
+                    heroLogo.visibility = View.VISIBLE
+                    heroTitle.visibility = View.GONE
+                } else {
+                    heroLogo.visibility = View.GONE
+                    heroTitle.visibility = View.VISIBLE
+                    heroTitle.text = item.title
+                }
+            }
+        } else {
+            heroLogo?.visibility = View.GONE
+            heroTitle.visibility = View.VISIBLE
+            heroTitle.text = item.title
+        }
+
+        // Rating ring
+        heroGauge?.setScore(item.voteAverage)
+
+        // Metadata
+        val metaParts = mutableListOf<String>()
+        if (item.year.isNotBlank()) metaParts.add(item.year)
+        if (item.mediaType == "tv" && item.seasonsCount > 0) metaParts.add("${item.seasonsCount} Seasons")
+        else if (item.mediaType == "movie" && item.runtimeMinutes > 0) {
+            val h = item.runtimeMinutes / 60
+            val m = item.runtimeMinutes % 60
+            metaParts.add(if (h > 0) "${h}h ${m}m" else "${m}m")
+        } else {
+            metaParts.add(if (item.mediaType == "tv") "Series" else "Movie")
+        }
+        heroMeta?.text = metaParts.joinToString(" · ")
+
+        // Synopsis
+        heroSynopsis?.text = item.overview
+
+        // Dynamic genre chips (up to 3)
+        heroGenres?.removeAllViews()
+        val genreNames = tmdbRepository.getGenreNames(item.genreIds.take(3), item.mediaType)
+        val displayGenres = if (genreNames.isNotEmpty()) genreNames else listOf(if (item.mediaType == "tv") "Series" else "Movie")
+        val font = resources.getFont(R.font.manrope)
+        displayGenres.forEachIndexed { i, genre ->
+            val chip = TextView(this).apply {
+                text = genre
+                setTextColor(0xFFC7CCD6.toInt())
+                textSize = 9f
+                typeface = font
+                setBackgroundResource(R.drawable.bg_chip_outline)
+                setPadding(dp(8), dp(2), dp(8), dp(2))
+                if (i > 0) {
+                    val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                    lp.marginStart = dp(6)
+                    layoutParams = lp
+                }
+            }
+            heroGenres?.addView(chip)
+        }
+
+        // Backdrop: w1280 or downsampled for low tier
+        if (!item.backdropPath.isNullOrBlank() && wallpaperView != null) {
+            val isLowTier = dev.plume.DeviceTier.isLowTier(this)
+            val (targetW, targetH) = if (isLowTier) 960 to 540 else 1920 to 1080
+            tmdbImageLoader.load(item.backdropPath, dev.plume.tmdb.TmdbImageLoader.SIZE_BACKDROP, targetW, targetH) { bmp ->
+                if (bmp != null) {
+                    val newDrawable = BitmapDrawable(resources, bmp)
+                    val oldDrawable = wallpaperView.drawable
+                    val actualOld = if (oldDrawable is TransitionDrawable) oldDrawable.getDrawable(1) else oldDrawable
+                    if (animated && actualOld != null && !isLowTier) {
+                        val td = TransitionDrawable(arrayOf(actualOld, newDrawable)).apply {
+                            isCrossFadeEnabled = true
+                        }
+                        wallpaperView.setImageDrawable(td)
+                        td.startTransition(duration.toInt())
+                    } else {
+                        wallpaperView.setImageDrawable(newDrawable)
+                    }
+                }
+            }
+        }
+
+        // Vertical page dots
+        val dots = listOf(
+            findViewById<View>(R.id.dot0),
+            findViewById<View>(R.id.dot1),
+            findViewById<View>(R.id.dot2),
+            findViewById<View>(R.id.dot3)
+        )
+        dots.forEachIndexed { index, dot ->
+            dot?.let {
+                val isActive = index == (currentHeroIndex % 4)
+                it.alpha = if (isActive) 1f else 0.4f
+                val lp = it.layoutParams
+                lp.height = dp(if (isActive) 14 else 6)
+                it.layoutParams = lp
+            }
+        }
+    }
+
+    private fun rotateHeroNext() {
+        if (tmdbHeroItems.isNotEmpty()) {
+            currentHeroIndex = (currentHeroIndex + 1) % tmdbHeroItems.size
+            updateTmdbHeroUi(tmdbHeroItems[currentHeroIndex], animated = true)
+        } else if (heroItems.isNotEmpty()) {
+            currentHeroIndex = (currentHeroIndex + 1) % heroItems.size
+            updateHeroUi(heroItems[currentHeroIndex], animated = true)
+        }
+    }
+
+    private fun rotateHeroPrevious() {
+        if (tmdbHeroItems.isNotEmpty()) {
+            currentHeroIndex = if (currentHeroIndex - 1 < 0) tmdbHeroItems.size - 1 else currentHeroIndex - 1
+            updateTmdbHeroUi(tmdbHeroItems[currentHeroIndex], animated = true)
+        } else if (heroItems.isNotEmpty()) {
+            currentHeroIndex = if (currentHeroIndex - 1 < 0) heroItems.size - 1 else currentHeroIndex - 1
+            updateHeroUi(heroItems[currentHeroIndex], animated = true)
+        }
+    }
+
+    private fun setupDefaultHeroItems() {
+        if (heroItems.isEmpty()) {
+            heroItems.add(HeroItem(
+                id = "the-last-lighthouse",
+                title = "The Last Lighthouse",
+                metadata = "2026 · 2 Seasons",
+                genres = listOf("Drama", "Mystery", "Thriller"),
+                synopsis = "A keeper on a storm-cut island starts receiving signals from a ship that sank forty years ago.",
+                backdropRes = R.drawable.hero_the_last_lighthouse
+            ))
+            heroItems.add(HeroItem(
+                id = "saltwater-kings",
+                title = "Saltwater Kings",
+                metadata = "2025 · Movie · 2h 14m",
+                genres = listOf("Action", "Adventure"),
+                synopsis = "Deep-sea fishermen uncover a sunken treasure with dangerous secrets in treacherous arctic waters.",
+                backdropRes = R.drawable.hero_saltwater_kings
+            ))
+            heroItems.add(HeroItem(
+                id = "neon-harbor",
+                title = "Neon Harbor",
+                metadata = "2026 · 3 Seasons",
+                genres = listOf("Sci-Fi", "Cyberpunk", "Crime"),
+                synopsis = "A cybernetic investigator tracks an elusive syndicate through the rainy underbelly of Neo-Tokyo.",
+                backdropRes = R.drawable.hero_neon_harbor
+            ))
+            heroItems.add(HeroItem(
+                id = "oceanic-one",
+                title = "Oceanic One",
+                metadata = "CH 104 · Live Documentary",
+                genres = listOf("Nature", "Documentary"),
+                synopsis = "Explore deep oceanic trenches and the bioluminescent creatures of the midnight zone.",
+                backdropRes = R.drawable.hero_oceanic_one
+            ))
+        }
+    }
+
+    private fun updateHeroUi(item: HeroItem, animated: Boolean = true) {
+        val heroTitle = findViewById<TextView>(R.id.heroTitle) ?: return
+        val heroMeta = findViewById<TextView>(R.id.heroMetadata) ?: return
+        val heroSynopsis = findViewById<TextView>(R.id.heroSynopsis) ?: return
+        val heroGenres = findViewById<LinearLayout>(R.id.heroGenresContainer) ?: return
+        val wallpaperView = findViewById<ImageView>(R.id.wallpaper)
+
+        val am = getSystemService(ActivityManager::class.java)
+        val isLowRam = am?.isLowRamDevice == true
+        val duration = if (isLowRam) 200L else 400L
+
+        // Update backdrop artwork
+        if (wallpaperView != null && item.backdropRes != 0) {
+            val newDrawable = getDrawable(item.backdropRes)
+            if (newDrawable != null) {
+                val oldDrawable = wallpaperView.drawable
+                val actualOld = if (oldDrawable is TransitionDrawable) oldDrawable.getDrawable(1) else oldDrawable
+                if (animated && actualOld != null) {
+                    val td = TransitionDrawable(arrayOf(actualOld, newDrawable)).apply {
+                        isCrossFadeEnabled = true
+                    }
+                    wallpaperView.setImageDrawable(td)
+                    td.startTransition(duration.toInt())
+                } else {
+                    wallpaperView.setImageDrawable(newDrawable)
+                }
+            }
+        }
+
+        if (animated) {
+            heroTitle.animate().alpha(0f).setDuration(duration / 2).withEndAction {
+                heroTitle.text = item.title
+                heroTitle.animate().alpha(1f).setDuration(duration / 2).start()
+            }.start()
+
+            heroMeta.animate().alpha(0f).setDuration(duration / 2).withEndAction {
+                heroMeta.text = item.metadata
+                heroMeta.animate().alpha(1f).setDuration(duration / 2).start()
+            }.start()
+
+            heroSynopsis.animate().alpha(0f).setDuration(duration / 2).withEndAction {
+                heroSynopsis.text = item.synopsis
+                heroSynopsis.animate().alpha(1f).setDuration(duration / 2).start()
+            }.start()
+        } else {
+            heroTitle.text = item.title
+            heroMeta.text = item.metadata
+            heroSynopsis.text = item.synopsis
+        }
+
+        // Update genre chips
+        heroGenres.removeAllViews()
+        val soraFont = resources.getFont(R.font.manrope)
+        item.genres.forEachIndexed { i, genre ->
+            val chip = TextView(this).apply {
+                text = genre
+                setTextColor(0xFFC7CCD6.toInt())
+                textSize = 9f
+                typeface = soraFont
+                setBackgroundResource(R.drawable.bg_chip_outline)
+                setPadding(dp(8), dp(2), dp(8), dp(2))
+                if (i > 0) {
+                    val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                    lp.marginStart = dp(6)
+                    layoutParams = lp
+                }
+            }
+            heroGenres.addView(chip)
+        }
+
+        // Update vertical page dots
+        val dots = listOf(
+            findViewById<View>(R.id.dot0),
+            findViewById<View>(R.id.dot1),
+            findViewById<View>(R.id.dot2),
+            findViewById<View>(R.id.dot3)
+        )
+        dots.forEachIndexed { index, dot ->
+            dot?.let {
+                val isActive = index == currentHeroIndex
+                it.alpha = if (isActive) 1f else 0.4f
+                val lp = it.layoutParams
+                lp.height = dp(if (isActive) 14 else 6)
+                it.layoutParams = lp
+            }
+        }
+    }
+
+    private fun rotateHero() {
+        if (tmdbHeroItems.isNotEmpty()) {
+            rotateHeroNext()
+        } else if (heroItems.isNotEmpty()) {
+            currentHeroIndex = (currentHeroIndex + 1) % heroItems.size
+            updateHeroUi(heroItems[currentHeroIndex], animated = true)
+        }
+    }
+
+    private fun startHeroRotation() {
+        heroRotationHandler.removeCallbacks(heroRotationRunnable)
+        heroRotationPaused = false
+        heroRotationHandler.postDelayed(heroRotationRunnable, getHeroRotationInterval())
+    }
+
+    private fun pauseHeroRotation() {
+        heroRotationPaused = true
+        heroRotationHandler.removeCallbacks(heroRotationRunnable)
+    }
+
+    private fun resumeHeroRotation() {
+        if (heroRotationPaused && currentTab == "home") {
+            heroRotationPaused = false
+            heroRotationHandler.removeCallbacks(heroRotationRunnable)
+            heroRotationHandler.postDelayed(heroRotationRunnable, getHeroRotationInterval())
+        }
+    }
+
+    private fun queryOnyxFeatured() {
+        Executors.newSingleThreadExecutor().execute {
+            try {
+                val pkg = dev.plume.livetv.LiveTvRepository.resolveActivePackage(this)
+                val uri = Uri.parse("content://${pkg}.provider/featured")
+                val cursor = contentResolver.query(uri, null, null, null, null)
+                cursor?.use { c ->
+                    val list = mutableListOf<HeroItem>()
+                    val idCol = c.getColumnIndex("_id")
+                    val titleCol = c.getColumnIndex("title")
+                    val metaCol = c.getColumnIndex("metadata")
+                    val genresCol = c.getColumnIndex("genres")
+                    val synCol = c.getColumnIndex("synopsis")
+                    val artCol = c.getColumnIndex("artwork_uri")
+                    while (c.moveToNext()) {
+                        val id = if (idCol >= 0) c.getString(idCol) else ""
+                        val title = if (titleCol >= 0) c.getString(titleCol) else ""
+                        val meta = if (metaCol >= 0) c.getString(metaCol) else ""
+                        val genresStr = if (genresCol >= 0) c.getString(genresCol) else ""
+                        val syn = if (synCol >= 0) c.getString(synCol) else ""
+                        val art = if (artCol >= 0) c.getString(artCol) else null
+                        val genres = genresStr.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                        val res = when (id) {
+                            "the-last-lighthouse" -> R.drawable.hero_the_last_lighthouse
+                            "saltwater-kings" -> R.drawable.hero_saltwater_kings
+                            "neon-harbor" -> R.drawable.hero_neon_harbor
+                            "oceanic-one" -> R.drawable.hero_oceanic_one
+                            else -> 0
+                        }
+                        list.add(HeroItem(id, title, meta, genres, syn, art, res))
+                    }
+                    if (list.isNotEmpty()) {
+                        runOnUiThread {
+                            heroItems.clear()
+                            heroItems.addAll(list)
+                            if (tmdbHeroItems.isEmpty()) {
+                                currentHeroIndex = 0
+                                updateHeroUi(heroItems[0], animated = false)
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                // Provider unavailable or security check; retain default hero
+            }
+        }
+    }
+
+    private fun queryNyxFeatured() = queryOnyxFeatured()
+
+    private fun checkOnyxState(): OnyxState {
+        val pkg = dev.plume.livetv.LiveTvRepository.resolveActivePackage(this)
+        return try {
+            val info = packageManager.getApplicationInfo(pkg, 0)
+            if (!info.enabled) OnyxState.DISABLED else OnyxState.DEFAULT
+        } catch (e: PackageManager.NameNotFoundException) {
+            OnyxState.NOT_INSTALLED
+        }
+    }
+
+    private fun checkNyxState(): OnyxState = checkOnyxState()
+
+    private fun launchOnyx(destination: String? = null, itemId: String? = null) {
+        val pkg = dev.plume.livetv.LiveTvRepository.resolveActivePackage(this)
+        when (checkOnyxState()) {
+            OnyxState.NOT_INSTALLED -> {
+                showOnyxInstallHintDialog()
+                return
+            }
+            OnyxState.DISABLED -> {
+                openAppDetails(pkg)
+                return
+            }
+            OnyxState.DEFAULT -> {
+                try {
+                    val intent = packageManager.getLeanbackLaunchIntentForPackage(pkg)
+                        ?: packageManager.getLaunchIntentForPackage(pkg)
+                        ?: Intent(Intent.ACTION_MAIN).apply {
+                            component = ComponentName(pkg, "$pkg.MainActivity")
+                        }
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    if (destination != null) {
+                        intent.putExtra("onyx.extra.DESTINATION", destination)
+                        intent.putExtra("DESTINATION", destination)
+                    }
+                    if (itemId != null) {
+                        intent.putExtra("onyx.extra.ITEM_ID", itemId)
+                        intent.putExtra("ITEM_ID", itemId)
+                        intent.putExtra("onyx.extra.CHANNEL_ID", itemId)
+                        intent.putExtra("CHANNEL_ID", itemId)
+                    }
+                    intent.putExtra("onyx.extra.CALLER", "plume")
+                    intent.putExtra("CALLER", "plume")
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    showLaunchFailureToast()
+                }
+            }
+        }
+    }
+
+    private fun launchNyx(destination: String? = null, itemId: String? = null) = launchOnyx(destination, itemId)
+
+    private fun showOnyxInstallHintDialog() {
+        val dialog = Dialog(this)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(0xFF141821.toInt())
+            setPadding(dp(24), dp(24), dp(24), dp(24))
+            val title = TextView(this@MainActivity).apply {
+                text = getString(R.string.onyx_install_hint_title)
+                setTextColor(Color.WHITE)
+                textSize = 18f
+                typeface = resources.getFont(R.font.sora)
+            }
+            val msg = TextView(this@MainActivity).apply {
+                text = getString(R.string.onyx_install_hint_msg)
+                setTextColor(0xFF929AAA.toInt())
+                textSize = 13f
+                setPadding(0, dp(12), 0, dp(20))
+                typeface = resources.getFont(R.font.manrope)
+            }
+            val okBtn = TextView(this@MainActivity).apply {
+                text = getString(R.string.done)
+                setTextColor(Color.WHITE)
+                setBackgroundResource(R.drawable.bg_pill_outline)
+                setPadding(dp(20), dp(8), dp(20), dp(8))
+                isFocusable = true
+                setOnClickListener { dialog.dismiss() }
+            }
+            TvFocusHelper.attach(okBtn, cornerRadiusPx = dp(999).toFloat(), isButton = true)
+            addView(title)
+            addView(msg)
+            addView(okBtn)
+        }
+        dialog.setContentView(card)
+        dialog.window?.run {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            setLayout(dp(440), ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
+        dialog.show()
+    }
+
+    private fun showNyxInstallHintDialog() = showOnyxInstallHintDialog()
+
+    private fun showLaunchFailureToast(title: String? = null, msg: String? = null) {
+        val toast = findViewById<View>(R.id.launchFailureToast) ?: return
+        if (title != null) findViewById<TextView>(R.id.toastTitle)?.text = title
+        if (msg != null) findViewById<TextView>(R.id.toastMessage)?.text = msg
+        toast.visibility = View.VISIBLE
+        val retryBtn = findViewById<View>(R.id.toastRetryButton)
+        retryBtn?.requestFocus()
+
+        toastDismissHandler.removeCallbacksAndMessages(null)
+        toastDismissHandler.postDelayed({
+            hideLaunchFailureToast()
+            onyxTileView?.requestFocus()
+        }, 4000L)
+    }
+
+    private fun hideLaunchFailureToast() {
+        val toast = findViewById<View>(R.id.launchFailureToast) ?: return
+        toast.visibility = View.GONE
+        toastDismissHandler.removeCallbacksAndMessages(null)
+    }
+
+    private fun openAppDetails(pkg: String) {
+        try {
+            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.parse("package:$pkg")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            })
+        } catch (e: Exception) {
+            toast(getString(R.string.cant_uninstall))
+        }
+    }
+
+    private fun createOnyxTileView(): View {
+        val w = dp(126)
+        val h = dp(67)
+        val pad = dp(3)
+        val tile = FrameLayout(this).apply {
+            layoutParams = LinearLayout.LayoutParams(w, h).apply { marginEnd = dp(10) }
+            isFocusable = true
+            tag = "com.onyxtv.app"
+        }
+
+        val cardView = FrameLayout(this).apply {
+            layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT).apply {
+                setMargins(pad, pad, pad, pad)
+            }
+            background = GradientDrawable().apply {
+                cornerRadius = dp(10).toFloat()
+                setColor(0xFF141821.toInt())
+                setStroke(dp(1), 0x26FFFFFF.toInt())
+            }
+            outlineProvider = ViewOutlineProvider.BACKGROUND
+            clipToOutline = true
+        }
+
+        val contentLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)
+        }
+
+        // Top Row: Onyx Badge
+        val topRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val badgeIcon = ImageView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(14), dp(14))
+            setImageResource(R.drawable.ic_onyx_badge)
+        }
+        val badgeLabel = TextView(this).apply {
+            text = getString(R.string.onyx_brand)
+            setTextColor(0xFF00E5FF.toInt())
+            textSize = 8.5f
+            typeface = resources.getFont(R.font.sora)
+            setPadding(dp(4), 0, 0, 0)
+        }
+        topRow.addView(badgeIcon)
+        topRow.addView(badgeLabel)
+
+        // Title: Entertainment
+        val titleView = TextView(this).apply {
+            text = getString(R.string.onyx_tile_title)
+            setTextColor(Color.WHITE)
+            textSize = 12.5f
+            typeface = resources.getFont(R.font.sora)
+            setPadding(0, dp(2), 0, 0)
+        }
+
+        // Subtitle: dynamic based on state & focus
+        val subtitleView = TextView(this).apply {
+            textSize = 9.5f
+            typeface = resources.getFont(R.font.manrope)
+            setPadding(0, dp(2), 0, 0)
+        }
+
+        contentLayout.addView(topRow)
+        contentLayout.addView(titleView)
+        contentLayout.addView(subtitleView)
+        cardView.addView(contentLayout)
+        tile.addView(cardView)
+
+        fun updateTileState(focused: Boolean) {
+            val state = checkOnyxState()
+            when (state) {
+                OnyxState.DEFAULT -> {
+                    cardView.alpha = 1.0f
+                    subtitleView.setTextColor(if (focused) 0xFF00E5FF.toInt() else 0xFF929AAA.toInt())
+                    subtitleView.text = if (focused) getString(R.string.onyx_tile_focused_subtitle) else getString(R.string.onyx_tile_default_subtitle)
+                }
+                OnyxState.NOT_INSTALLED -> {
+                    cardView.alpha = 1.0f
+                    subtitleView.setTextColor(0xFFFFAA5A.toInt())
+                    subtitleView.text = getString(R.string.onyx_tile_not_installed)
+                }
+                OnyxState.DISABLED -> {
+                    cardView.alpha = 0.55f
+                    subtitleView.setTextColor(0xFF929AAA.toInt())
+                    subtitleView.text = getString(R.string.onyx_tile_disabled)
+                }
+            }
+        }
+
+        updateTileState(false)
+
+        TvFocusHelper.attachCard(tile, cardView, cornerRadiusPx = dp(10).toFloat(), focusColor = 0xFF00E5FF.toInt()) { focused ->
+            updateTileState(focused)
+        }
+
+        tile.setOnClickListener {
+            launchOnyx()
+        }
+
+        tile.setOnKeyListener { _, keyCode, event ->
+            if (event.action == KeyEvent.ACTION_DOWN && keyCode == KeyEvent.KEYCODE_DPAD_UP) {
+                findViewById<View>(R.id.heroWatchButton)?.requestFocus()
+                true
+            } else false
+        }
+
+        onyxTileView = tile
+        return tile
+    }
+
+    private fun createNyxTileView(): View = createOnyxTileView()
+
+    private fun getAppBorderColor(a: App, banner: Drawable?): Int {
+        if (a.pkg == "com.onyxtv.app" || a.pkg == "com.onyxtv.app.debug" || a.pkg == "com.nyxplayer.app") {
+            return 0xFF00E5FF.toInt()
+        }
+        var color = BRAND_COLOURS[a.pkg]
+        if (color == null) {
+            color = cachedAccent(a)
+        }
+        if (color == null && banner != null) {
+            try {
+                color = accent(banner)
+            } catch (_: Exception) {}
+        }
+        if (color == null) {
+            try {
+                color = accent(a.icon)
+            } catch (_: Exception) {}
+        }
+        val finalColor = color ?: TvFocusHelper.COLOR_ACCENT
+        val hsv = FloatArray(3)
+        Color.colorToHSV(finalColor, hsv)
+        if (hsv[2] < 0.65f) {
+            hsv[2] = 0.85f
+            return Color.HSVToColor(hsv)
+        }
+        return finalColor
+    }
+
+    private fun createAppBannerTile(a: App): View {
+        val w = dp(126)
+        val h = dp(67)
+        val pad = dp(3)
+        val tile = FrameLayout(this).apply {
+            layoutParams = LinearLayout.LayoutParams(w, h).apply { marginEnd = dp(10) }
+            isFocusable = true
+            tag = a.pkg
+        }
+
+        val cardView = FrameLayout(this).apply {
+            layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT).apply {
+                setMargins(pad, pad, pad, pad)
+            }
+            background = GradientDrawable().apply {
+                cornerRadius = dp(10).toFloat()
+                setColor(0xFF141821.toInt())
+                setStroke(dp(1), 0x1AFFFFFF.toInt())
+            }
+            outlineProvider = ViewOutlineProvider.BACKGROUND
+            clipToOutline = true
+        }
+
+        val pm = packageManager
+        val banner = try {
+            pm.getApplicationBanner(a.pkg) ?: pm.getActivityBanner(a.launch)
+        } catch (e: Exception) {
+            null
+        } ?: a.icon
+
+        if (banner != null) {
+            val img = ImageView(this).apply {
+                setImageDrawable(banner)
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)
+            }
+            cardView.addView(img)
+        } else {
+            val col = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                setPadding(dp(8), dp(6), dp(8), dp(6))
+                layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)
+            }
+            val icon = ImageView(this).apply {
+                layoutParams = LinearLayout.LayoutParams(dp(28), dp(28))
+                setImageDrawable(try { pm.getApplicationIcon(a.pkg) } catch (e: Exception) { null })
+            }
+            val label = TextView(this).apply {
+                text = a.label
+                setTextColor(Color.WHITE)
+                textSize = 9.5f
+                typeface = resources.getFont(R.font.manrope)
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                setPadding(0, dp(4), 0, 0)
+            }
+            col.addView(icon)
+            col.addView(label)
+            cardView.addView(col)
+        }
+        tile.addView(cardView)
+
+        val borderColor = getAppBorderColor(a, banner)
+        TvFocusHelper.attachCard(tile, cardView, cornerRadiusPx = dp(10).toFloat(), focusColor = borderColor)
+
+        tile.setOnClickListener { launch(a) }
+        tile.setOnLongClickListener {
+            showAppContextMenu(a, tile)
+            true
+        }
+
+        return tile
+    }
+
+    private fun createAllAppsTile(): View {
+        val w = dp(126)
+        val h = dp(67)
+        val pad = dp(3)
+        val tile = FrameLayout(this).apply {
+            layoutParams = LinearLayout.LayoutParams(w, h)
+            isFocusable = true
+            tag = "all_apps"
+        }
+
+        val cardView = FrameLayout(this).apply {
+            layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT).apply {
+                setMargins(pad, pad, pad, pad)
+            }
+            background = GradientDrawable().apply {
+                cornerRadius = dp(10).toFloat()
+                setColor(0xFF1C2130.toInt())
+                setStroke(dp(1), 0x26FFFFFF.toInt())
+            }
+            outlineProvider = ViewOutlineProvider.BACKGROUND
+            clipToOutline = true
+        }
+
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)
+        }
+        val icon = ImageView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(24), dp(24))
+            setImageResource(R.drawable.ic_apps)
+            setColorFilter(Color.WHITE)
+        }
+        val label = TextView(this).apply {
+            text = getString(R.string.all_apps)
+            setTextColor(Color.WHITE)
+            textSize = 10f
+            typeface = resources.getFont(R.font.sora)
+            setPadding(0, dp(4), 0, 0)
+        }
+        col.addView(icon)
+        col.addView(label)
+        cardView.addView(col)
+        tile.addView(cardView)
+
+        TvFocusHelper.attachCard(tile, cardView, cornerRadiusPx = dp(10).toFloat(), focusColor = 0xFF8B7CFF.toInt())
+        tile.setOnClickListener { openAllApps() }
+
+        return tile
+    }
+
+    private fun showAppContextMenu(app: App, fromView: View) {
+        val dialog = Dialog(this)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(0xFF141821.toInt())
+            setPadding(dp(24), dp(20), dp(24), dp(20))
+            val title = TextView(this@MainActivity).apply {
+                text = app.label
+                setTextColor(Color.WHITE)
+                textSize = 16f
+                typeface = resources.getFont(R.font.sora)
+                setPadding(0, 0, 0, dp(12))
+            }
+            addView(title)
+
+            // Pin / Unpin
+            val hidden = rowHiddenSet()
+            val isPinned = inRow(app.pkg, hidden)
+            val pinBtn = TextView(this@MainActivity).apply {
+                text = getString(if (isPinned) R.string.apps_in_row else R.string.pin_to_favorites)
+                setTextColor(Color.WHITE)
+                textSize = 12f
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                isFocusable = true
+                setOnClickListener {
+                    if (isPinned) {
+                        prefs.edit().putStringSet("row_hidden", rowHiddenSet() + app.pkg).apply()
+                    } else {
+                        prefs.edit().putStringSet("row_hidden", rowHiddenSet() - app.pkg).apply()
+                    }
+                    renderApps()
+                    dialog.dismiss()
+                }
+            }
+            TvFocusHelper.attach(pinBtn, cornerRadiusPx = dp(8).toFloat(), isButton = true)
+            addView(pinBtn)
+
+            // App info
+            val infoBtn = TextView(this@MainActivity).apply {
+                text = getString(R.string.app_info)
+                setTextColor(Color.WHITE)
+                textSize = 12f
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                isFocusable = true
+                setOnClickListener {
+                    openAppDetails(app.pkg)
+                    dialog.dismiss()
+                }
+            }
+            TvFocusHelper.attach(infoBtn, cornerRadiusPx = dp(8).toFloat(), isButton = true)
+            addView(infoBtn)
+
+            // Uninstall
+            val uninstBtn = TextView(this@MainActivity).apply {
+                text = getString(R.string.uninstall)
+                setTextColor(0xFFFF5A6E.toInt())
+                textSize = 12f
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                isFocusable = true
+                setOnClickListener {
+                    dialog.dismiss()
+                    try {
+                        startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:${app.pkg}")))
+                    } catch (e: Exception) {
+                        toast(getString(R.string.cant_uninstall))
+                    }
+                }
+            }
+            TvFocusHelper.attach(uninstBtn, cornerRadiusPx = dp(8).toFloat(), isButton = true)
+            addView(uninstBtn)
+        }
+
+        dialog.setContentView(card)
+        dialog.window?.run {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            setLayout(dp(360), ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
+        dialog.show()
+    }
+
     // ---------- all apps ----------
 
     private fun openAllApps() {
         allAppsGrid.removeAllViews()
+        val favRow = findViewById<LinearLayout>(R.id.allAppsFavoritesRow)
+        favRow?.removeAllViews()
+
+        val allList = sortedApps()
+
+        val countHeader = findViewById<TextView>(R.id.allAppsTitle)
+        countHeader?.text = getString(R.string.all_apps_installed, allList.size)
+
+        val sorted = if (allAppsSortAz) {
+            allList.sortedBy { it.label.lowercase() }
+        } else {
+            allList.sortedByDescending { prefs.getInt("n_" + it.pkg, 0) }
+        }
+
+        // Favorites row: Onyx tile first, then top favorites
+        favRow?.let { row ->
+            row.addView(createOnyxTileView())
+            val favs = sorted.take(4)
+            for (app in favs) {
+                if (app.pkg != "com.onyxtv.app" && app.pkg != "com.onyxtv.app.debug" && app.pkg != "com.nyxplayer.app") {
+                    row.addView(createAppBannerTile(app))
+                }
+            }
+        }
+
+        // Populate 6-column grid of 16:9 tiles
         val gap = dp(10)
-        val width = (resources.displayMetrics.widthPixels - dp(96) - gap * 5) / 6
-        for (a in sortedApps()) {
-            val t = appTile(a) // holding OK here pins it to the row (see onHold)
+        val colWidth = (resources.displayMetrics.widthPixels - dp(96) - gap * 5) / 6
+        val colHeight = colWidth * 9 / 16
+
+        for (a in sorted) {
+            val t = createAppBannerTile(a)
             allAppsGrid.addView(t, GridLayout.LayoutParams().apply {
-                this.width = width
-                height = dp(76)
+                this.width = colWidth
+                this.height = colHeight
                 setMargins(0, 0, gap, gap)
             })
         }
+
         allApps.visibility = View.VISIBLE
         homeFocusable(false)
         allAppsGrid.getChildAt(0)?.requestFocus()
@@ -3386,7 +5040,7 @@ class MainActivity : Activity() {
         allApps.visibility = View.GONE
         homeFocusable(true)
         renderApps()
-        findViewById<View>(R.id.allAppsButton).requestFocus() // back where it was opened from
+        onyxTileView?.requestFocus()
     }
 
     // ---------- screensaver ----------
@@ -3809,7 +5463,7 @@ class MainActivity : Activity() {
     }
 
     private fun showWeather() {
-        val view = findViewById<TextView>(R.id.weather)
+        val view = findViewById<TextView>(R.id.weather) ?: return
         val unit = prefs.getString("weather", "off")
         if (unit == "off" || !prefs.contains("wx_temp")) {
             view.visibility = View.GONE
@@ -4495,6 +6149,9 @@ class MainActivity : Activity() {
             "playstation" to 0xFF0070D1.toInt(),
             "xbox" to 0xFF107C10.toInt(),
             "nintendoswitch" to 0xFFE60012.toInt(),
+            "com.onyxtv.app" to 0xFF00E5FF.toInt(),
+            "com.onyxtv.app.debug" to 0xFF00E5FF.toInt(),
+            "com.nyxplayer.app" to 0xFF00E5FF.toInt(),
             "com.netflix.ninja" to 0xFFE50914.toInt(),
             "com.stremio.one" to 0xFF8D3DAF.toInt(),
             "io.gh.reisxd.tizentube.cobalt" to 0xFFFF0000.toInt(),
@@ -4507,6 +6164,7 @@ class MainActivity : Activity() {
         )
 
         val DEFAULT_ORDER = listOf(
+            "com.onyxtv.app",
             "com.netflix.ninja",
             "com.stremio.one",
             "io.gh.reisxd.tizentube.cobalt",
@@ -4530,6 +6188,9 @@ class MainActivity : Activity() {
 
         /** Monochrome brand marks (Simple Icons, CC0). `true` = wordmark, shown without a label. */
         val LOGOS = mapOf(
+            "com.onyxtv.app" to (R.drawable.logo_onyxtv to false),
+            "com.onyxtv.app.debug" to (R.drawable.logo_onyxtv to false),
+            "com.nyxplayer.app" to (R.drawable.logo_onyxtv to false),
             "com.netflix.ninja" to (R.drawable.logo_netflix to false),
             "com.stremio.one" to (R.drawable.logo_stremio to false),
             "io.gh.reisxd.tizentube.cobalt" to (R.drawable.logo_youtube to false),

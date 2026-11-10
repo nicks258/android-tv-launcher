@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Sized in dp for a 960x540dp TV canvas (1080p and 4K both map to it). -->
+<!-- Sized in dp for a 960x540dp TV canvas (1080p density = 2.0). 1dp = 2px on 1080p. -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#F3F5F7">
+    android:background="@color/bg_primary">
 
+    <!-- 1. Full-bleed background artwork -->
     <ImageView
         android:id="@+id/wallpaper"
         android:layout_width="match_parent"
@@ -13,244 +14,700 @@
         android:importantForAccessibility="no"
         android:scaleType="centerCrop" />
 
+    <!-- 2. Three-way dark gradient overlay: Left-to-Right 78%, Top 85%, Bottom 90% (Zero Blurs) -->
+    <dev.plume.PlumeGradientOverlayView
+        android:id="@+id/gradientOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- Hidden compatibility views for existing launcher settings -->
+    <TextView
+        android:id="@+id/featured"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:visibility="gone" />
+    <TextView
+        android:id="@+id/appsTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:visibility="gone" />
+    <dev.plume.FittingLabel
+        android:id="@+id/rowLabel"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone" />
     <LinearLayout
+        android:id="@+id/nameRow"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone" />
+    <ImageView
+        android:id="@+id/iptvButton"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone" />
+    <ImageView
+        android:id="@+id/allAppsButton"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone" />
+    <ImageView
+        android:id="@+id/systemSettings"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone" />
+
+    <!-- 3. Main Home Content: safe area 48dp (96px) horizontal, 27dp (54px) vertical -->
+    <RelativeLayout
         android:id="@+id/content"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:clipChildren="false"
         android:clipToPadding="false"
-        android:orientation="vertical"
-        android:paddingStart="48dp"
-        android:paddingTop="27dp"
-        android:paddingEnd="48dp"
-        android:paddingBottom="32dp">
-        <!-- Bottom is a little more than the top: the last text line's box includes space under the letters,
-             so this makes the visible gap below Continue Watching match the gap above the clock. -->
+        android:paddingStart="@dimen/tv_safe_horizontal"
+        android:paddingTop="@dimen/tv_safe_vertical"
+        android:paddingEnd="@dimen/tv_safe_horizontal"
+        android:paddingBottom="@dimen/tv_safe_vertical">
 
-        <LinearLayout
+        <!-- ================= TOP BAR ================= -->
+        <RelativeLayout
+            android:id="@+id/topBar"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal">
+            android:layout_alignParentTop="true"
+            android:elevation="10dp"
+            android:clipChildren="false">
 
+            <!-- Top Left: Clock & Date (Single clock on screen) -->
             <LinearLayout
-                android:layout_width="0dp"
+                android:id="@+id/clockContainer"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
+                android:layout_alignParentStart="true"
+                android:layout_centerVertical="true"
                 android:orientation="vertical">
 
                 <TextClock
                     android:id="@+id/clock"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:fontFamily="sans-serif"
+                    android:fontFamily="@font/sora"
                     android:format12Hour="h:mm"
                     android:format24Hour="HH:mm"
                     android:includeFontPadding="false"
-                    android:textSize="30sp" />
+                    android:textColor="@color/text_primary"
+                    android:textSize="18sp"
+                    android:textStyle="bold" />
 
                 <TextClock
                     android:id="@+id/date"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="2dp"
-                    android:fontFamily="sans-serif"
-                    android:format12Hour="EEE d MMM"
-                    android:format24Hour="EEE d MMM"
-                    android:textSize="15sp" />
+                    android:fontFamily="@font/manrope"
+                    android:format12Hour="EEEE, d MMMM"
+                    android:format24Hour="EEEE, d MMMM"
+                    android:includeFontPadding="false"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="11sp" />
 
-                <!-- "14° Cloudy · Paris". Off unless turned on in launcher settings. -->
                 <TextView
                     android:id="@+id/weather"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:alpha="0.7"
-                    android:fontFamily="sans-serif"
-                    android:maxLines="1"
-                    android:textSize="15sp"
-                    android:visibility="gone" />
-
-                <!-- "Featured: a show". Only with the Shows wallpaper: the show whose picture is on screen. -->
-                <TextView
-                    android:id="@+id/featured"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:alpha="0.7"
+                    android:layout_marginTop="2dp"
                     android:ellipsize="end"
-                    android:fontFamily="sans-serif"
+                    android:fontFamily="@font/manrope"
+                    android:includeFontPadding="false"
                     android:maxLines="1"
-                    android:maxWidth="560dp"
-                    android:textSize="15sp"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="11sp"
                     android:visibility="gone" />
             </LinearLayout>
 
-            <ImageView
-                android:id="@+id/wifi"
-                android:layout_width="36dp"
-                android:layout_height="36dp"
-                android:contentDescription="@string/network_settings"
-                android:focusable="true"
-                android:padding="8dp"
-                android:src="@drawable/ic_wifi" />
+            <!-- Center: Navigation Tabs (Home, Live TV, Movies, Series, Favorites) -->
+            <LinearLayout
+                android:id="@+id/tabsContainer"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_centerInParent="true"
+                android:clipChildren="false"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
 
-            <ImageView
-                android:id="@+id/sourcesButton"
-                android:layout_width="36dp"
-                android:layout_height="36dp"
-                android:layout_marginStart="8dp"
-                android:contentDescription="@string/sources"
-                android:focusable="true"
-                android:padding="8dp"
-                android:src="@drawable/ic_sources"
-                android:visibility="gone" />
+                <!-- Home Tab (Selected Pill) -->
+                <TextView
+                    android:id="@+id/tabHome"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_pill_tab_selected"
+                    android:focusable="true"
+                    android:fontFamily="@font/manrope"
+                    android:paddingStart="14dp"
+                    android:paddingTop="5dp"
+                    android:paddingEnd="14dp"
+                    android:paddingBottom="5dp"
+                    android:text="@string/tab_home"
+                    android:textColor="@color/pill_selected_text"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
 
-            <ImageView
-                android:id="@+id/allAppsButton"
-                android:layout_width="36dp"
-                android:layout_height="36dp"
-                android:layout_marginStart="8dp"
-                android:contentDescription="@string/all_apps"
-                android:focusable="true"
-                android:padding="9dp"
-                android:src="@drawable/ic_apps" />
+                <!-- Live TV Tab -->
+                <TextView
+                    android:id="@+id/tabLiveTv"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:background="@drawable/bg_pill_tab_unselected"
+                    android:focusable="true"
+                    android:fontFamily="@font/manrope"
+                    android:paddingStart="14dp"
+                    android:paddingTop="5dp"
+                    android:paddingEnd="14dp"
+                    android:paddingBottom="5dp"
+                    android:text="@string/tab_livetv"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp" />
 
-            <ImageView
-                android:id="@+id/systemSettings"
-                android:layout_width="36dp"
-                android:layout_height="36dp"
-                android:layout_marginStart="8dp"
-                android:contentDescription="@string/settings"
-                android:focusable="true"
-                android:padding="8dp"
-                android:src="@drawable/ic_settings" />
+                <!-- Movies Tab -->
+                <TextView
+                    android:id="@+id/tabMovies"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:background="@drawable/bg_pill_tab_unselected"
+                    android:focusable="true"
+                    android:fontFamily="@font/manrope"
+                    android:paddingStart="14dp"
+                    android:paddingTop="5dp"
+                    android:paddingEnd="14dp"
+                    android:paddingBottom="5dp"
+                    android:text="@string/tab_movies"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp" />
 
-            <ImageView
-                android:id="@+id/launcherSettings"
-                android:layout_width="36dp"
-                android:layout_height="36dp"
-                android:layout_marginStart="8dp"
-                android:contentDescription="@string/plume_settings"
-                android:focusable="true"
-                android:padding="8dp"
-                android:src="@drawable/ic_tune" />
-        </LinearLayout>
+                <!-- Series Tab -->
+                <TextView
+                    android:id="@+id/tabSeries"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:background="@drawable/bg_pill_tab_unselected"
+                    android:focusable="true"
+                    android:fontFamily="@font/manrope"
+                    android:paddingStart="14dp"
+                    android:paddingTop="5dp"
+                    android:paddingEnd="14dp"
+                    android:paddingBottom="5dp"
+                    android:text="@string/tab_series"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp" />
 
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1" />
+                <!-- Favorites Tab -->
+                <TextView
+                    android:id="@+id/tabFavorites"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:background="@drawable/bg_pill_tab_unselected"
+                    android:focusable="true"
+                    android:fontFamily="@font/manrope"
+                    android:paddingStart="14dp"
+                    android:paddingTop="5dp"
+                    android:paddingEnd="14dp"
+                    android:paddingBottom="5dp"
+                    android:text="@string/tab_favorites"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp" />
+            </LinearLayout>
 
-        <!-- Only shown while editing the row (it carries the instructions). -->
-        <TextView
-            android:id="@+id/appsTitle"
+            <!-- Top Right Action Buttons (Wi-Fi, Inputs, Search, Settings) -->
+            <LinearLayout
+                android:id="@+id/topActions"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_alignParentEnd="true"
+                android:layout_centerVertical="true"
+                android:clipChildren="false"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <!-- Wi-Fi Status Button -->
+                <ImageView
+                    android:id="@+id/wifi"
+                    android:layout_width="@dimen/top_button_size"
+                    android:layout_height="@dimen/top_button_size"
+                    android:background="@drawable/bg_circle_button"
+                    android:contentDescription="@string/network_settings"
+                    android:focusable="true"
+                    android:padding="6dp"
+                    android:src="@drawable/ic_wifi" />
+
+                <!-- Inputs Button (shown only if sources exist) -->
+                <ImageView
+                    android:id="@+id/sourcesButton"
+                    android:layout_width="@dimen/top_button_size"
+                    android:layout_height="@dimen/top_button_size"
+                    android:layout_marginStart="8dp"
+                    android:background="@drawable/bg_circle_button"
+                    android:contentDescription="@string/sources"
+                    android:focusable="true"
+                    android:padding="6dp"
+                    android:src="@drawable/ic_sources"
+                    android:visibility="gone" />
+
+                <!-- Search Button -->
+                <ImageView
+                    android:id="@+id/searchButton"
+                    android:layout_width="@dimen/top_button_size"
+                    android:layout_height="@dimen/top_button_size"
+                    android:layout_marginStart="8dp"
+                    android:background="@drawable/bg_circle_button"
+                    android:contentDescription="@string/search"
+                    android:focusable="true"
+                    android:padding="6dp"
+                    android:src="@drawable/ic_search" />
+
+                <!-- Settings Button -->
+                <ImageView
+                    android:id="@+id/launcherSettings"
+                    android:layout_width="@dimen/top_button_size"
+                    android:layout_height="@dimen/top_button_size"
+                    android:layout_marginStart="8dp"
+                    android:background="@drawable/bg_circle_button"
+                    android:contentDescription="@string/plume_settings"
+                    android:focusable="true"
+                    android:padding="6dp"
+                    android:src="@drawable/ic_settings" />
+            </LinearLayout>
+        </RelativeLayout>
+
+        <!-- ================= FEATURED HERO ================= -->
+        <!-- Starting ~160dp from top, on left side -->
+        <LinearLayout
+            android:id="@+id/heroContainer"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="8dp"
-            android:fontFamily="sans-serif-medium"
-            android:textSize="15sp"
-            android:visibility="gone" />
+            android:layout_marginTop="160dp"
+            android:layout_marginEnd="64dp"
+            android:clipChildren="false"
+            android:orientation="vertical">
 
-        <!-- Both rows: the scroller reaches 16dp (one grid gap) past the content edges on each side and
-             clips there. That is room for the focus lift, while the next item, a gap away, stays hidden.
-             Same on left and right, and SnapScrollView scrolls by whole items. -->
-        <dev.plume.SnapScrollView
-            android:id="@+id/appScroll"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="-16dp"
-            android:layout_marginTop="-24dp"
-            android:layout_marginEnd="-16dp"
-            android:layout_marginBottom="-24dp"
-            android:clipToPadding="false"
-            android:paddingStart="16dp"
-            android:paddingTop="24dp"
-            android:paddingEnd="16dp"
-            android:paddingBottom="24dp"
-            android:scrollbars="none">
+            <!-- Eyebrow: "NEW & TOP RATED · MOVIE/SERIES" -->
+            <LinearLayout
+                android:id="@+id/heroBadge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
 
+                <ImageView
+                    android:id="@+id/heroBadgeIcon"
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
+                    android:importantForAccessibility="no"
+                    android:src="@drawable/ic_onyx_badge" />
+
+                <TextView
+                    android:id="@+id/heroEyebrow"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:fontFamily="@font/sora"
+                    android:letterSpacing="0.08"
+                    android:text="NEW &amp; TOP RATED · FEATURED"
+                    android:textColor="@color/accent_secondary"
+                    android:textSize="9sp"
+                    android:textStyle="bold" />
+
+                <!-- Small TMDB credit on the hero -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:fontFamily="@font/manrope"
+                    android:text="TMDB"
+                    android:textColor="#66FFFFFF"
+                    android:textSize="8sp" />
+            </LinearLayout>
+
+            <!-- Title (or Title Logo) & Buttons -->
             <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
                 android:clipChildren="false"
-                android:orientation="vertical">
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
 
-                <LinearLayout
-                    android:id="@+id/appRow"
+                <ImageView
+                    android:id="@+id/heroLogoImageView"
+                    android:layout_width="wrap_content"
+                    android:layout_height="48dp"
+                    android:adjustViewBounds="true"
+                    android:maxHeight="48dp"
+                    android:scaleType="fitStart"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/heroTitle"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:clipChildren="false"
-                    android:orientation="horizontal" />
-
-                <!-- Name of the focused app, slid under its tile (tvOS style). In the scroll content, so it scrolls along. -->
-                <dev.plume.FittingLabel
-                    android:id="@+id/rowLabel"
-                    android:layout_width="200dp"
-                    android:layout_height="20dp"
-                    android:layout_marginTop="8dp"
-                    android:alpha="0"
-                    android:gravity="center"
+                    android:ellipsize="end"
+                    android:fontFamily="@font/sora"
+                    android:includeFontPadding="false"
                     android:maxLines="1"
-                    android:textSize="13sp" />
+                    android:text="The Last Lighthouse"
+                    android:textColor="@color/text_primary"
+                    android:textSize="32sp"
+                    android:textStyle="bold" />
 
-                <!-- "App names: Always": every name under its tile, in place of rowLabel (same space). -->
-                <LinearLayout
-                    android:id="@+id/nameRow"
+                <!-- Watch Button -->
+                <TextView
+                    android:id="@+id/heroWatchButton"
                     android:layout_width="wrap_content"
-                    android:layout_height="20dp"
-                    android:layout_marginTop="8dp"
-                    android:orientation="horizontal"
-                    android:visibility="gone" />
-            </LinearLayout>
-        </dev.plume.SnapScrollView>
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="14dp"
+                    android:background="@drawable/bg_pill_outline"
+                    android:focusable="true"
+                    android:fontFamily="@font/manrope"
+                    android:paddingStart="16dp"
+                    android:paddingTop="6dp"
+                    android:paddingEnd="16dp"
+                    android:paddingBottom="6dp"
+                    android:text="@string/watch_button"
+                    android:textColor="@color/text_primary"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
 
-        <TextView
-            android:id="@+id/watchTitle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:alpha="0.7"
-            android:fontFamily="sans-serif-medium"
-            android:text="@string/continue_watching"
-            android:textSize="14sp"
+                <!-- More Info Button -->
+                <TextView
+                    android:id="@+id/heroMoreInfoButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="10dp"
+                    android:background="@drawable/bg_pill_outline"
+                    android:focusable="true"
+                    android:fontFamily="@font/manrope"
+                    android:paddingStart="14dp"
+                    android:paddingTop="6dp"
+                    android:paddingEnd="14dp"
+                    android:paddingBottom="6dp"
+                    android:text="More info"
+                    android:textColor="@color/text_primary"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <!-- Metadata line with Circular Rating Ring -->
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <dev.plume.tmdb.RatingGaugeView
+                    android:id="@+id/heroRatingGauge"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp" />
+
+                <TextView
+                    android:id="@+id/heroMetadata"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:fontFamily="@font/manrope"
+                    android:text="2026 · 2 Seasons"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+            <!-- Genre chips: "Drama", "Mystery", "Thriller" -->
+            <LinearLayout
+                android:id="@+id/heroGenresContainer"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_chip_outline"
+                    android:fontFamily="@font/manrope"
+                    android:paddingStart="8dp"
+                    android:paddingTop="2dp"
+                    android:paddingEnd="8dp"
+                    android:paddingBottom="2dp"
+                    android:text="Drama"
+                    android:textColor="@color/text_body_artwork"
+                    android:textSize="9sp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:background="@drawable/bg_chip_outline"
+                    android:fontFamily="@font/manrope"
+                    android:paddingStart="8dp"
+                    android:paddingTop="2dp"
+                    android:paddingEnd="8dp"
+                    android:paddingBottom="2dp"
+                    android:text="Mystery"
+                    android:textColor="@color/text_body_artwork"
+                    android:textSize="9sp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:background="@drawable/bg_chip_outline"
+                    android:fontFamily="@font/manrope"
+                    android:paddingStart="8dp"
+                    android:paddingTop="2dp"
+                    android:paddingEnd="8dp"
+                    android:paddingBottom="2dp"
+                    android:text="Thriller"
+                    android:textColor="@color/text_body_artwork"
+                    android:textSize="9sp" />
+            </LinearLayout>
+
+            <!-- One-line synopsis -->
+            <TextView
+                android:id="@+id/heroSynopsis"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:ellipsize="end"
+                android:fontFamily="@font/manrope"
+                android:lineSpacingMultiplier="1.15"
+                android:maxLines="2"
+                android:text="A keeper on a storm-cut island starts receiving signals from a ship that sank forty years ago."
+                android:textColor="@color/text_body_artwork"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <!-- ================= MOVIES / SERIES BROWSE VIEW ================= -->
+        <dev.plume.browse.BrowseView
+            android:id="@+id/browseView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_below="@id/topBar"
+            android:layout_alignParentBottom="true"
+            android:layout_marginTop="8dp"
+            android:clipChildren="false"
+            android:clipToPadding="false"
             android:visibility="gone" />
 
-        <dev.plume.SnapScrollView
-            android:id="@+id/watchScroll"
+        <!-- ================= LIVE TV GUIDE VIEW ================= -->
+        <dev.plume.livetv.LiveTvGuideView
+            android:id="@+id/liveTvGuideView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_below="@id/topBar"
+            android:layout_alignParentBottom="true"
+            android:layout_marginTop="8dp"
+            android:clipChildren="false"
+            android:clipToPadding="false"
+            android:visibility="gone" />
+
+        <!-- Hero Vertical Page Dots (Right edge) -->
+        <LinearLayout
+            android:id="@+id/heroDotsContainer"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_alignParentEnd="true"
+            android:layout_marginTop="240dp"
+            android:gravity="center_horizontal"
+            android:orientation="vertical">
+
+            <View
+                android:id="@+id/dot0"
+                android:layout_width="6dp"
+                android:layout_height="14dp"
+                android:background="@drawable/bg_pill_tab_selected" />
+            <View
+                android:id="@+id/dot1"
+                android:layout_width="6dp"
+                android:layout_height="6dp"
+                android:layout_marginTop="6dp"
+                android:alpha="0.4"
+                android:background="@drawable/bg_pill_tab_selected" />
+            <View
+                android:id="@+id/dot2"
+                android:layout_width="6dp"
+                android:layout_height="6dp"
+                android:layout_marginTop="6dp"
+                android:alpha="0.4"
+                android:background="@drawable/bg_pill_tab_selected" />
+            <View
+                android:id="@+id/dot3"
+                android:layout_width="6dp"
+                android:layout_height="6dp"
+                android:layout_marginTop="6dp"
+                android:alpha="0.4"
+                android:background="@drawable/bg_pill_tab_selected" />
+        </LinearLayout>
+
+        <!-- ================= APPS ROW ================= -->
+        <!-- Placed at bottom of safe area -->
+        <LinearLayout
+            android:id="@+id/appsSection"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="-16dp"
-            android:layout_marginTop="-16dp"
-            android:layout_marginEnd="-16dp"
-            android:layout_marginBottom="-24dp"
-            android:clipToPadding="false"
-            android:paddingStart="16dp"
-            android:paddingTop="24dp"
-            android:paddingEnd="16dp"
-            android:paddingBottom="24dp"
-            android:scrollbars="none"
+            android:layout_alignParentBottom="true"
+            android:clipChildren="false"
+            android:orientation="vertical">
+
+            <!-- "Apps" Row Header (40px / 20sp, Sora 600) -->
+            <TextView
+                android:id="@+id/appsHeader"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="8dp"
+                android:fontFamily="@font/sora"
+                android:text="Apps"
+                android:textColor="@color/text_primary"
+                android:textSize="18sp"
+                android:textStyle="bold" />
+
+            <!-- Translucent Tray (10% white, 2px border, rounded left, bleeds right) -->
+            <FrameLayout
+                android:id="@+id/appsTray"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="-64dp"
+                android:background="@drawable/bg_apps_tray"
+                android:clipChildren="true"
+                android:clipToPadding="false"
+                android:outlineProvider="background"
+                android:clipToOutline="true">
+
+                <HorizontalScrollView
+                    android:id="@+id/appScroll"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:clipChildren="true"
+                    android:clipToPadding="false"
+                    android:paddingStart="24dp"
+                    android:paddingTop="14dp"
+                    android:paddingBottom="14dp"
+                    android:paddingEnd="80dp"
+                    android:scrollbars="none">
+
+                    <!-- App Tiles Row -->
+                    <LinearLayout
+                        android:id="@+id/appRow"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:clipChildren="false"
+                        android:clipToPadding="false"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal" />
+                </HorizontalScrollView>
+            </FrameLayout>
+
+            <!-- Compatibility views for continue watching (if configured) -->
+            <TextView
+                android:id="@+id/watchTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:visibility="gone" />
+            <dev.plume.SnapScrollView
+                android:id="@+id/watchScroll"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:visibility="gone">
+                <LinearLayout
+                    android:id="@+id/watchRow"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </dev.plume.SnapScrollView>
+        </LinearLayout>
+
+        <!-- ================= LAUNCH FAILURE TOAST ================= -->
+        <!-- Bottom-center, auto-dismisses after 4s, Retry takes focus, Back closes it -->
+        <FrameLayout
+            android:id="@+id/launchFailureToast"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_alignParentBottom="true"
+            android:layout_centerHorizontal="true"
+            android:layout_marginBottom="20dp"
+            android:background="@drawable/bg_chip_outline"
+            android:backgroundTint="#F2141821"
+            android:elevation="12dp"
+            android:paddingStart="20dp"
+            android:paddingTop="12dp"
+            android:paddingEnd="20dp"
+            android:paddingBottom="12dp"
             android:visibility="gone">
 
             <LinearLayout
-                android:id="@+id/watchRow"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:clipChildren="false"
-                android:orientation="horizontal" />
-        </dev.plume.SnapScrollView>
-    </LinearLayout>
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
 
-    <!-- All apps: hidden until the Apps tile is pressed; Back closes it. -->
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/toastTitle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/sora"
+                        android:text="@string/onyx_launch_error_title"
+                        android:textColor="@color/text_primary"
+                        android:textSize="12sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/toastMessage"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:fontFamily="@font/manrope"
+                        android:text="@string/onyx_launch_error_msg"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="10sp" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/toastRetryButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="20dp"
+                    android:background="@drawable/bg_pill_outline"
+                    android:focusable="true"
+                    android:fontFamily="@font/manrope"
+                    android:paddingStart="14dp"
+                    android:paddingTop="6dp"
+                    android:paddingEnd="14dp"
+                    android:paddingBottom="6dp"
+                    android:text="@string/retry"
+                    android:textColor="@color/text_primary"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+        </FrameLayout>
+    </RelativeLayout>
+
+    <!-- ================= ALL APPS OVERLAY (Page 1) ================= -->
     <ScrollView
         android:id="@+id/allApps"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
+        android:background="@color/bg_primary"
         android:clipChildren="false"
         android:clipToPadding="false"
-        android:paddingStart="48dp"
-        android:paddingTop="28dp"
-        android:paddingEnd="48dp"
-        android:paddingBottom="28dp"
+        android:paddingStart="@dimen/tv_safe_horizontal"
+        android:paddingTop="@dimen/tv_safe_vertical"
+        android:paddingEnd="@dimen/tv_safe_horizontal"
+        android:paddingBottom="@dimen/tv_safe_vertical"
         android:scrollbars="none"
         android:visibility="gone">
 
@@ -260,25 +717,162 @@
             android:clipChildren="false"
             android:orientation="vertical">
 
+            <!-- All Apps Header: Plume, Clock, Date -->
+            <RelativeLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+
+                <TextView
+                    android:id="@+id/allAppsPlumeLogo"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_alignParentStart="true"
+                    android:fontFamily="@font/sora"
+                    android:text="Plume"
+                    android:textColor="@color/text_primary"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_alignParentEnd="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextClock
+                        android:id="@+id/allAppsClock"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/sora"
+                        android:format12Hour="h:mm"
+                        android:format24Hour="HH:mm"
+                        android:textColor="@color/text_primary"
+                        android:textSize="14sp" />
+
+                    <TextClock
+                        android:id="@+id/allAppsDate"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="10dp"
+                        android:fontFamily="@font/manrope"
+                        android:format12Hour="EEE, d MMM"
+                        android:format24Hour="EEE, d MMM"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="12sp" />
+                </LinearLayout>
+            </RelativeLayout>
+
+            <!-- Favorites Row -->
             <TextView
-                android:id="@+id/allAppsTitle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginBottom="12dp"
-                android:fontFamily="sans-serif"
-                android:text="@string/all_apps"
-                android:textSize="20sp" />
+                android:layout_marginTop="16dp"
+                android:fontFamily="@font/sora"
+                android:text="@string/tab_favorites"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp" />
 
+            <HorizontalScrollView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:clipChildren="false"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:id="@+id/allAppsFavoritesRow"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:clipChildren="false"
+                    android:orientation="horizontal" />
+            </HorizontalScrollView>
+
+            <!-- All Apps Controls & Count -->
+            <RelativeLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:layout_marginBottom="10dp">
+
+                <TextView
+                    android:id="@+id/allAppsTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_alignParentStart="true"
+                    android:layout_centerVertical="true"
+                    android:fontFamily="@font/sora"
+                    android:text="All Apps"
+                    android:textColor="@color/text_primary"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_alignParentEnd="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <!-- Sort toggle button -->
+                    <TextView
+                        android:id="@+id/allAppsSortButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/bg_pill_tab_unselected"
+                        android:focusable="true"
+                        android:fontFamily="@font/manrope"
+                        android:paddingStart="12dp"
+                        android:paddingTop="4dp"
+                        android:paddingEnd="12dp"
+                        android:paddingBottom="4dp"
+                        android:text="@string/sort_az"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="11sp" />
+
+                    <!-- Edit layout button -->
+                    <TextView
+                        android:id="@+id/allAppsEditButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:background="@drawable/bg_pill_tab_unselected"
+                        android:focusable="true"
+                        android:fontFamily="@font/manrope"
+                        android:paddingStart="12dp"
+                        android:paddingTop="4dp"
+                        android:paddingEnd="12dp"
+                        android:paddingBottom="4dp"
+                        android:text="@string/edit_layout"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="11sp" />
+                </LinearLayout>
+            </RelativeLayout>
+
+            <!-- 6-column Grid of 16:9 Tiles -->
             <GridLayout
                 android:id="@+id/allAppsGrid"
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:clipChildren="false"
                 android:columnCount="6" />
+
+            <!-- Bottom help footer legend -->
+            <TextView
+                android:id="@+id/allAppsLegend"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginTop="20dp"
+                android:layout_marginBottom="12dp"
+                android:fontFamily="@font/manrope"
+                android:text="@string/all_apps_legend"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp" />
         </LinearLayout>
     </ScrollView>
 
-    <!-- Launcher settings: side panel over a dimmed home screen; Back closes it. -->
+    <!-- ================= SETTINGS SIDE PANEL ================= -->
     <FrameLayout
         android:id="@+id/settingsScrim"
         android:layout_width="match_parent"
@@ -298,7 +892,6 @@
             android:paddingEnd="48dp"
             android:paddingBottom="27dp">
 
-            <!-- "Plume settings ›" above a section's title, so you know where Back goes. -->
             <TextView
                 android:id="@+id/settingsCrumb"
                 android:layout_width="wrap_content"
@@ -311,12 +904,12 @@
                 android:id="@+id/settingsTitle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:fontFamily="sans-serif-medium"
+                android:fontFamily="@font/sora"
                 android:paddingStart="14dp"
                 android:text="@string/plume_settings"
+                android:textColor="@color/text_primary"
                 android:textSize="20sp" />
 
-            <!-- Scrolls once the rows outgrow the screen; focus moving down scrolls it along. -->
             <ScrollView
                 android:layout_width="match_parent"
                 android:layout_height="0dp"
@@ -331,17 +924,18 @@
                     android:orientation="vertical" />
             </ScrollView>
 
-            <!-- What the focused row does; empty for rows that need no explaining, but always 3 lines tall. -->
             <TextView
                 android:id="@+id/settingsHelp"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
+                android:fontFamily="@font/manrope"
                 android:lineSpacingMultiplier="1.15"
                 android:maxLines="3"
                 android:minLines="3"
                 android:paddingStart="14dp"
                 android:paddingEnd="14dp"
+                android:textColor="@color/text_secondary"
                 android:textSize="13sp" />
         </dev.plume.GlassBox>
     </FrameLayout>

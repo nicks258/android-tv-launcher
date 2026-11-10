@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Shape Radii (1080p pixels / 2 for 960x540dp TV canvas) -->
+    <dimen name="radius_tile">10dp</dimen>      <!-- 20px -->
+    <dimen name="radius_card">8dp</dimen>       <!-- 16px -->
+    <dimen name="radius_button">7dp</dimen>     <!-- 14px -->
+    <dimen name="radius_pill">999dp</dimen>
+
+    <!-- TV Safe Area: 96px horizontal, 54px vertical -->
+    <dimen name="tv_safe_horizontal">48dp</dimen>
+    <dimen name="tv_safe_vertical">27dp</dimen>
+
+    <!-- Banners & Layout: 252x134 px, 20px gap, 56px action buttons -->
+    <dimen name="banner_width">126dp</dimen>    <!-- 252px -->
+    <dimen name="banner_height">67dp</dimen>    <!-- 134px -->
+    <dimen name="banner_gap">10dp</dimen>       <!-- 20px -->
+    <dimen name="row_gap">16dp</dimen>          <!-- 32px -->
+    <dimen name="top_button_size">28dp</dimen>  <!-- 56px -->
+
+    <!-- Focus Specs -->
+    <dimen name="focus_ring_width">2dp</dimen>  <!-- 4px -->
+    <dimen name="focus_ring_offset">2.5dp</dimen> <!-- 5px -->
+</resources>

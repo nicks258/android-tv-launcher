@@ -79,6 +79,8 @@ jobs:
             echo "merge_status=clean" >> "$GITHUB_OUTPUT"
           else
             echo "merge_status=conflict" >> "$GITHUB_OUTPUT"
+            git merge --abort
+            git reset --hard upstream/"$UPSTREAM_BRANCH"
           fi
 
           git push origin "$SYNC_BRANCH" --force
@@ -88,45 +90,50 @@ jobs:
         if: steps.check-changes.outputs.has_changes == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MERGE_STATUS: ${{ steps.merge-upstream.outputs.merge_status }}
         run: |
           PR_TITLE="chore(upstream): sync changes from aradhyas8/Plume_Launcher ($UPSTREAM_BRANCH)"
-          
-          if [ "${{ steps.merge-upstream.outputs.merge_status }}" = "clean" ]; then
-            PR_BODY="### 🤖 Automated Upstream Sync
 
-Found **$NEW_COMMITS_COUNT** new commit(s) from upstream \`$UPSTREAM_BRANCH\`.
-
-#### Upstream Commits:
-\`\`\`text
-$COMMITS_LOG
-\`\`\`
-
-✅ **Clean Merge:** Changes merged cleanly on top of custom modifications without overwriting local custom fixes.
-Please review the changes and merge into \`$TARGET_BRANCH\`."
+          if [ "$MERGE_STATUS" = "clean" ]; then
+            {
+              echo "### 🤖 Automated Upstream Sync"
+              echo ""
+              echo "Found **$NEW_COMMITS_COUNT** new commit(s) from upstream \`$UPSTREAM_BRANCH\`."
+              echo ""
+              echo "#### Upstream Commits:"
+              echo '```text'
+              echo "$COMMITS_LOG"
+              echo '```'
+              echo ""
+              echo "✅ **Clean Merge:** Changes merged cleanly on top of custom modifications without overwriting local custom fixes."
+              echo "Please review the changes and merge into \`$TARGET_BRANCH\`."
+            } > /tmp/pr_body.md
           else
-            PR_BODY="### ⚠️ Automated Upstream Sync (Merge Conflict Detected)
-
-Found **$NEW_COMMITS_COUNT** new commit(s) from upstream \`$UPSTREAM_BRANCH\`.
-
-#### Upstream Commits:
-\`\`\`text
-$COMMITS_LOG
-\`\`\`
-
-⚠️ **Merge Conflict:** Upstream changes conflict with custom modifications.
-Please checkout \`$SYNC_BRANCH\`, resolve conflicts locally, push, and merge this Pull Request into \`$TARGET_BRANCH\`."
+            {
+              echo "### ⚠️ Automated Upstream Sync (Merge Conflict Detected)"
+              echo ""
+              echo "Found **$NEW_COMMITS_COUNT** new commit(s) from upstream \`$UPSTREAM_BRANCH\`."
+              echo ""
+              echo "#### Upstream Commits:"
+              echo '```text'
+              echo "$COMMITS_LOG"
+              echo '```'
+              echo ""
+              echo "⚠️ **Merge Conflict:** Upstream changes conflict with custom modifications."
+              echo "Please checkout \`$SYNC_BRANCH\`, resolve conflicts locally, push, and merge this Pull Request into \`$TARGET_BRANCH\`."
+            } > /tmp/pr_body.md
           fi
 
           EXISTING_PR=$(gh pr list --head "$SYNC_BRANCH" --base "$TARGET_BRANCH" --state open --json number --jq '.[0].number')
           if [ -n "$EXISTING_PR" ]; then
             echo "Updating existing PR #$EXISTING_PR..."
-            gh pr edit "$EXISTING_PR" --title "$PR_TITLE" --body "$PR_BODY"
+            gh pr edit "$EXISTING_PR" --title "$PR_TITLE" --body-file /tmp/pr_body.md
           else
             echo "Creating new PR..."
             gh pr create \
               --base "$TARGET_BRANCH" \
               --head "$SYNC_BRANCH" \
               --title "$PR_TITLE" \
-              --body "$PR_BODY"
+              --body-file /tmp/pr_body.md
           fi
 

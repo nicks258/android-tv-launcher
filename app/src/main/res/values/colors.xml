@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Shared Design Language: Colors -->
+    <color name="bg_primary">#090B10</color>
+    <color name="surface">#141821</color>
+    <color name="surface_raised">#1C2130</color>
+    <color name="accent_primary">#8B7CFF</color>
+    <color name="accent_secondary">#42D6C5</color>
+    <color name="color_live">#FF5A6E</color>
+    <color name="color_warning">#FFAA5A</color>
+    <color name="text_primary">#FFFFFF</color>
+    <color name="text_secondary">#929AAA</color>
+    <color name="text_body_artwork">#C7CCD6</color>
+
+    <!-- Translucent Surface Tokens (No Blurs) -->
+    <color name="tray_bg">#1AFFFFFF</color>       <!-- 10% white -->
+    <color name="tray_border">#38FFFFFF</color>   <!-- 22% white -->
+    <color name="icon_btn_bg">#14FFFFFF</color>   <!-- 8% white -->
+    <color name="pill_unselected">#14FFFFFF</color>
+    <color name="pill_selected">#FFFFFF</color>
+    <color name="pill_selected_text">#090B10</color>
+</resources>
+

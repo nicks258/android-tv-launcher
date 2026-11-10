@@ -4,7 +4,13 @@ plugins {
     id("com.android.application")
 }
 
-// No dependencies on purpose: framework Views only, to keep RAM and APK size minimal.
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+val tmdbReadToken = (localProps.getProperty("TMDB_READ_TOKEN") ?: "").trim()
+
+// Framework Views with minimal dependencies to keep RAM and APK size minimal.
 android {
     namespace = "dev.plume"
     compileSdk = 36
@@ -25,10 +31,13 @@ android {
             .map { if (it.startsWith("### ")) "#" + it.removePrefix("### ") else it.removePrefix("- ") }
         require(notes.isNotEmpty()) { "CHANGELOG.md has no entries under \"## $baseVersion\"" }
         resValue("string", "whats_new", notes.joinToString("\\n") { it.replace("'", "\\'").replace("\"", "\\\"") })
+
+        buildConfigField("String", "TMDB_READ_TOKEN", "\"$tmdbReadToken\"")
     }
 
     buildFeatures {
         resValues = true
+        buildConfig = true
     }
 
     // CI fails on new lint errors only; the ones already here are listed in lint-baseline.xml
@@ -88,5 +97,6 @@ android {
 }
 
 dependencies {
+    implementation("androidx.palette:palette-ktx:1.0.0")
     testImplementation("junit:junit:4.13.2")
 }

@@ -28,9 +28,20 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
         </intent>
+        <package android:name="com.onyxtv.app" />
+        <package android:name="com.onyxtv.app.debug" />
+        <provider android:authorities="com.onyxtv.app.provider" />
+        <provider android:authorities="com.onyxtv.app.debug.provider" />
         <package android:name="com.google.android.apps.tv.launcherx" />
         <!-- Fire OS's input switch, for the HDMI tiles (Remap.openInput) -->
         <package android:name="com.amazon.tv.inputpreference.service" />
+        <!-- CloudStream stable and prerelease for Watch handoff -->
+        <package android:name="com.lagradost.cloudstream3" />
+        <package android:name="com.lagradost.cloudstream3.prerelease" />
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="cloudstreamsearch" />
+        </intent>
     </queries>
 
     <application

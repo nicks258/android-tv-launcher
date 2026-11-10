@@ -1,8 +1,16 @@
 {
     "version": "2.0.0",
+    "inputs": [
+        {
+            "id": "tvIp",
+            "type": "promptString",
+            "description": "Enter Android TV IP address (e.g. 192.168.8.108)",
+            "default": "192.168.8.108"
+        }
+    ],
     "tasks": [
         {
-            "label": "Run: Android TV Emulator",
+            "label": "Android Launcher: Run on Simulator",
             "type": "shell",
             "command": "./scripts/run_app.sh run emulator",
             "group": {
@@ -17,7 +25,31 @@
             "problemMatcher": []
         },
         {
-            "label": "Hot Reload / Fast Restart: Emulator",
+            "label": "Android Launcher: Run on Home TV",
+            "type": "shell",
+            "command": "./scripts/run_app.sh run tv",
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": false
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Android Launcher: Run on TV (Custom IP)",
+            "type": "shell",
+            "command": "./scripts/run_app.sh run ${input:tvIp}",
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": false
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Android Launcher: Hot Reload / Fast Restart (Simulator)",
             "type": "shell",
             "command": "./scripts/run_app.sh reload emulator",
             "group": "build",
@@ -29,9 +61,9 @@
             "problemMatcher": []
         },
         {
-            "label": "Run: Physical Android TV",
+            "label": "Android Launcher: Hot Reload / Fast Restart (Home TV)",
             "type": "shell",
-            "command": "./scripts/run_app.sh tv tv",
+            "command": "./scripts/run_app.sh reload tv",
             "group": "build",
             "presentation": {
                 "reveal": "always",
@@ -41,7 +73,7 @@
             "problemMatcher": []
         },
         {
-            "label": "Start Android TV Emulator",
+            "label": "Android Launcher: Start TV Simulator",
             "type": "shell",
             "command": "./scripts/run_app.sh emulator-start",
             "presentation": {
@@ -52,7 +84,41 @@
             "problemMatcher": []
         },
         {
-            "label": "View Emulator Logs (logcat)",
+            "label": "Android Launcher: Connect to Home TV (ADB)",
+            "type": "shell",
+            "command": "./scripts/run_app.sh connect-tv tv",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": false
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Android Launcher: Connect to Custom TV IP (ADB)",
+            "type": "shell",
+            "command": "./scripts/run_app.sh connect-tv ${input:tvIp}",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": false
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Android Launcher: Build Debug APK",
+            "type": "shell",
+            "command": "./gradlew assembleDebug",
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": false
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Android Launcher: View Simulator Logs (logcat)",
             "type": "shell",
             "command": "adb -s emulator-5554 logcat -v time dev.plume:V *:S",
             "isBackground": true,
@@ -64,7 +130,19 @@
             "problemMatcher": []
         },
         {
-            "label": "Sync from Upstream (aradhyas8/Plume_Launcher)",
+            "label": "Android Launcher: View Home TV Logs (logcat)",
+            "type": "shell",
+            "command": "adb -s 192.168.8.108:5555 logcat -v time dev.plume:V *:S",
+            "isBackground": true,
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "clear": false
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Android Launcher: Sync Upstream",
             "type": "shell",
             "command": "./scripts/sync_upstream.sh",
             "presentation": {
