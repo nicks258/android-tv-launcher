@@ -2,8 +2,8 @@
   "versionCode": 805,
   "versionName": "1.6.5",
   "apkUrl": "https://iptv-harbor.web.app/launcher.bin",
-  "apkSize": 4080800,
-  "sha256": "c366335299c589b09941276cf651209757a85963fa73d35152905baed3f3215f",
-  "releasedAt": "2026-11-10T12:00:00Z",
-  "releaseNotes": "Plume TV Launcher update with Firebase Hosting OTA updates, FileProvider installation fallback, and Leanback enhancements."
+  "apkSize": 4104007,
+  "sha256": "f37c445327eab95afb253a7502ed55f8c2ee5c1a00ebd43f02abac0212e37a83",
+  "releasedAt": "2026-11-10T10:17:43Z",
+  "releaseNotes": "Plume TV Launcher release with Firebase Hosting OTA updates and FileProvider installer."
 }

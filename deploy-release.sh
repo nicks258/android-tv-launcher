@@ -31,7 +31,7 @@ cd "$DIR"
 
 # Assemble Release APK
 echo "📦 Assembling Release APK..."
-./gradlew assembleRelease --daemon --parallel -x test -x lint
+./gradlew assembleRelease -PversionCode=805 -PversionName=1.6.5 --daemon --parallel -x test -x lint
 
 RELEASE_APK="$DIR/app/build/outputs/apk/release/app-release.apk"
 

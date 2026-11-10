@@ -41,6 +41,7 @@ jobs:
 
     env:
       FIREBASE_PROJECT_ID: iptv-harbor
+      FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
 
     steps:
       - name: Check out repository
@@ -177,7 +178,7 @@ jobs:
       # DEPLOY TO FIREBASE HOSTING
       # -------------------------------------------------------------
       - name: Deploy to Firebase Hosting via Token
-        if: ${{ (github.event_name == 'push' || github.event.inputs.deploy_to_firebase != 'no') && secrets.FIREBASE_TOKEN != '' }}
+        if: ${{ (github.event_name == 'push' || github.event.inputs.deploy_to_firebase != 'no') && env.FIREBASE_TOKEN != '' }}
         env:
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
         run: |
@@ -185,7 +186,7 @@ jobs:
           npx --yes firebase-tools deploy --only hosting --project iptv-harbor --token "$FIREBASE_TOKEN" --non-interactive
 
       - name: Deploy to Firebase Hosting via Service Account
-        if: ${{ (github.event_name == 'push' || github.event.inputs.deploy_to_firebase != 'no') && secrets.FIREBASE_TOKEN == '' }}
+        if: ${{ (github.event_name == 'push' || github.event.inputs.deploy_to_firebase != 'no') && env.FIREBASE_TOKEN == '' }}
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
