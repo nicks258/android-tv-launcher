@@ -1,6 +1,5 @@
 package dev.plume.livetv
 
-import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
@@ -12,11 +11,16 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
 import android.speech.RecognizerIntent
+import android.text.Editable
+import android.text.InputType
+import android.text.TextWatcher
 import android.util.AttributeSet
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
@@ -48,8 +52,8 @@ class LiveTvGuideView @JvmOverloads constructor(
     var onBackToTopBar: (() -> Unit)? = null
 
     // State
-    private var currentCountryCode: String = prefs.getString("selected_country", "IN") ?: "IN"
-    private var currentCountryName: String = "India"
+    private var currentCountryCode: String = prefs.getString("selected_country", "") ?: ""
+    private var currentCountryName: String = "All Channels"
     private var searchQuery: String = ""
     private var countriesList: List<CountryItem> = emptyList()
     private var channelsList: List<ChannelItem> = emptyList()
@@ -66,6 +70,7 @@ class LiveTvGuideView @JvmOverloads constructor(
     private val mainHandler = Handler(Looper.getMainLooper())
     private var pendingPreviewUpdate: Runnable? = null
     private var nowLineTicker: Runnable? = null
+    private var searchDebounceRunnable: Runnable? = null
 
     // Track focused channel and programme
     private var focusedChannel: ChannelItem? = null
@@ -88,7 +93,8 @@ class LiveTvGuideView @JvmOverloads constructor(
 
     // Search and Country Views
     private lateinit var searchBoxView: LinearLayout
-    private lateinit var searchTextView: TextView
+    private lateinit var searchEditText: EditText
+    private lateinit var clearIcon: ImageView
     private lateinit var countryChipsScroll: HorizontalScrollView
     private lateinit var countryChipsContainer: LinearLayout
 
@@ -304,6 +310,19 @@ class LiveTvGuideView @JvmOverloads constructor(
             clipToPadding = false
         }
 
+        val normalBg = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            setColor(Color.parseColor("#0FFFFFFF"))
+            setStroke(px(2), Color.parseColor("#29FFFFFF"))
+            cornerRadius = px(24).toFloat()
+        }
+        val focusedBg = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            setColor(Color.parseColor("#26FFFFFF"))
+            setStroke(px(2), Color.parseColor("#8B7CFF"))
+            cornerRadius = px(24).toFloat()
+        }
+
         // Search Box (324px wide matching channel column below)
         searchBoxView = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -311,58 +330,148 @@ class LiveTvGuideView @JvmOverloads constructor(
                 rightMargin = px(16)
             }
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(px(16), 0, px(16), 0)
-            isFocusable = true
-            isFocusableInTouchMode = true
-            background = context.getDrawable(R.drawable.bg_search_box)
-            TvFocusHelper.attach(this, cornerRadiusPx = px(24).toFloat(), isButton = true)
+            setPadding(px(14), 0, px(14), 0)
+            isFocusable = false
+            background = normalBg
 
-            setOnClickListener { showSearchInputDialog() }
-
-            setOnKeyListener { _, keyCode, event ->
-                if (event.action == KeyEvent.ACTION_DOWN) {
-                    when (keyCode) {
-                        KeyEvent.KEYCODE_DPAD_UP -> {
-                            onBackToTopBar?.invoke()
-                            true
-                        }
-                        KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                            if (countryChipsContainer.childCount > 0) {
-                                countryChipsContainer.getChildAt(0).requestFocus()
-                                true
-                            } else false
-                        }
-                        KeyEvent.KEYCODE_DPAD_DOWN -> {
-                            if (channelsColumnContainer.childCount > 0) {
-                                channelsColumnContainer.getChildAt(0).requestFocus()
-                                true
-                            } else false
-                        }
-                        else -> false
-                    }
-                } else false
+            setOnClickListener {
+                searchEditText.requestFocus()
+                val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                imm?.showSoftInput(searchEditText, InputMethodManager.SHOW_IMPLICIT)
             }
         }
 
         val searchIcon = ImageView(context).apply {
             layoutParams = LinearLayout.LayoutParams(px(20), px(20)).apply {
-                rightMargin = px(10)
+                rightMargin = px(8)
             }
             setImageResource(R.drawable.ic_search)
             setColorFilter(Color.parseColor("#929AAA"))
         }
         searchBoxView.addView(searchIcon)
 
-        searchTextView = TextView(context).apply {
-            layoutParams = LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f)
-            setTextSize(TypedValue.COMPLEX_UNIT_PX, px(19).toFloat())
+        searchEditText = EditText(context).apply {
+            layoutParams = LinearLayout.LayoutParams(0, LayoutParams.MATCH_PARENT, 1f).apply {
+                setMargins(px(4), 0, px(4), 0)
+            }
+            background = null
+            setPadding(0, 0, 0, 0)
+            gravity = Gravity.CENTER_VERTICAL
+            setTextSize(TypedValue.COMPLEX_UNIT_PX, px(18).toFloat())
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            setTextColor(Color.parseColor("#929AAA"))
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.parseColor("#929AAA"))
+            hint = "Search channels"
+            isSingleLine = true
             maxLines = 1
-            ellipsize = android.text.TextUtils.TruncateAt.END
-            text = "Search channels"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            imeOptions = EditorInfo.IME_ACTION_SEARCH or EditorInfo.IME_FLAG_NO_EXTRACT_UI
+            isFocusable = true
+            isFocusableInTouchMode = true
+            isCursorVisible = true
+
+            setOnFocusChangeListener { _, hasFocus ->
+                searchBoxView.background = if (hasFocus) focusedBg else normalBg
+                searchIcon.setColorFilter(if (hasFocus) Color.parseColor("#8B7CFF") else Color.parseColor("#929AAA"))
+                if (hasFocus) {
+                    val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                    imm?.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT)
+                }
+            }
+
+            setOnKeyListener { _, keyCode, event ->
+                if (event.action == KeyEvent.ACTION_DOWN) {
+                    when (keyCode) {
+                        KeyEvent.KEYCODE_DPAD_UP -> {
+                            val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                            imm?.hideSoftInputFromWindow(windowToken, 0)
+                            onBackToTopBar?.invoke()
+                            true
+                        }
+                        KeyEvent.KEYCODE_DPAD_DOWN -> {
+                            val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                            imm?.hideSoftInputFromWindow(windowToken, 0)
+                            if (channelsColumnContainer.childCount > 0) {
+                                channelsColumnContainer.getChildAt(0).requestFocus()
+                                true
+                            } else if (errorActionButton.visibility == View.VISIBLE) {
+                                errorActionButton.requestFocus()
+                                true
+                            } else false
+                        }
+                        KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                            if (selectionEnd >= text.length) {
+                                val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                                imm?.hideSoftInputFromWindow(windowToken, 0)
+                                if (countryChipsContainer.childCount > 0) {
+                                    countryChipsContainer.getChildAt(0).requestFocus()
+                                    true
+                                } else false
+                            } else false
+                        }
+                        KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_DPAD_CENTER -> {
+                            val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                            imm?.showSoftInput(this, InputMethodManager.SHOW_FORCED)
+                            false
+                        }
+                        else -> false
+                    }
+                } else false
+            }
+
+            setOnEditorActionListener { _, actionId, event ->
+                if (actionId == EditorInfo.IME_ACTION_SEARCH ||
+                    actionId == EditorInfo.IME_ACTION_DONE ||
+                    (event != null && event.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN)
+                ) {
+                    val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                    imm?.hideSoftInputFromWindow(windowToken, 0)
+                    clearFocus()
+                    if (channelsColumnContainer.childCount > 0) {
+                        channelsColumnContainer.getChildAt(0).requestFocus()
+                    } else if (errorActionButton.visibility == View.VISIBLE) {
+                        errorActionButton.requestFocus()
+                    }
+                    true
+                } else {
+                    false
+                }
+            }
+
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                    val query = s?.toString()?.trim() ?: ""
+                    clearIcon.visibility = if (query.isNotEmpty()) View.VISIBLE else View.GONE
+
+                    searchDebounceRunnable?.let { removeCallbacks(it) }
+                    val r = Runnable {
+                        if (searchQuery != query) {
+                            searchQuery = query
+                            loadChannelsAndProgrammes()
+                        }
+                    }
+                    searchDebounceRunnable = r
+                    postDelayed(r, 300L)
+                }
+                override fun afterTextChanged(s: Editable?) {}
+            })
         }
-        searchBoxView.addView(searchTextView)
+        searchBoxView.addView(searchEditText)
+
+        clearIcon = ImageView(context).apply {
+            layoutParams = LinearLayout.LayoutParams(px(20), px(20)).apply {
+                rightMargin = px(8)
+            }
+            setImageResource(R.drawable.ic_clear)
+            setColorFilter(Color.parseColor("#929AAA"))
+            visibility = View.GONE
+            setOnClickListener {
+                searchEditText.setText("")
+                searchEditText.requestFocus()
+            }
+        }
+        searchBoxView.addView(clearIcon)
 
         val micIcon = ImageView(context).apply {
             layoutParams = LinearLayout.LayoutParams(px(20), px(20))
@@ -625,6 +734,22 @@ class LiveTvGuideView @JvmOverloads constructor(
         // 1. Fetch countries
         repository.getCountriesAsync { countries ->
             countriesList = countries
+
+            if (countriesList.isNotEmpty()) {
+                val matched = countriesList.firstOrNull { it.code == currentCountryCode }
+                if (matched != null) {
+                    currentCountryCode = matched.code
+                    currentCountryName = matched.name
+                } else {
+                    currentCountryCode = countriesList.first().code
+                    currentCountryName = countriesList.first().name
+                    prefs.edit().putString("selected_country", currentCountryCode).apply()
+                }
+            } else {
+                currentCountryCode = "all"
+                currentCountryName = "All Channels"
+            }
+            gridCountryHeader.text = currentCountryName
             populateCountryChips()
 
             // 2. Determine initial focus channel from last watched
@@ -656,10 +781,27 @@ class LiveTvGuideView @JvmOverloads constructor(
             channelsList = channels
 
             if (channels.isEmpty()) {
-                showErrorState("No Channels Found", "No channels found matching '$searchQuery'.", "Clear Search") {
-                    searchQuery = ""
-                    searchTextView.text = "Search channels"
+                if (searchQuery.isNotBlank()) {
+                    showErrorState("No Channels Found", "No channels found matching '$searchQuery'.", "Clear Search") {
+                        searchEditText.setText("")
+                        searchEditText.requestFocus()
+                    }
+                } else if (countriesList.isNotEmpty() && currentCountryCode != "all" && currentCountryCode.isNotEmpty()) {
+                    // Current category has no channels; fallback to "all"
+                    currentCountryCode = "all"
+                    currentCountryName = "All Channels"
+                    prefs.edit().putString("selected_country", "all").apply()
+                    gridCountryHeader.text = currentCountryName
+                    populateCountryChips()
                     loadChannelsAndProgrammes()
+                } else {
+                    showErrorState(
+                        "No Channels in Onyx TV",
+                        "Please open Onyx TV to add an IPTV playlist or login to your account.",
+                        "Open Onyx TV"
+                    ) {
+                        launchOnyxGeneral()
+                    }
                 }
                 return@getChannelsAsync
             }
@@ -688,14 +830,25 @@ class LiveTvGuideView @JvmOverloads constructor(
     private fun populateCountryChips() {
         countryChipsContainer.removeAllViews()
 
-        for (country in countriesList) {
+        val displayedCountries = if (countriesList.size <= 50) {
+            countriesList
+        } else {
+            val top = countriesList.take(50).toMutableList()
+            val current = countriesList.firstOrNull { it.code == currentCountryCode }
+            if (current != null && !top.contains(current)) {
+                top.add(1, current)
+            }
+            top
+        }
+
+        for (country in displayedCountries) {
             val isSelected = country.code == currentCountryCode
             if (isSelected) {
                 currentCountryName = country.name
                 gridCountryHeader.text = currentCountryName
             }
 
-            val chipIndex = countriesList.indexOf(country)
+            val chipIndex = displayedCountries.indexOf(country)
 
             val chip = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -723,6 +876,7 @@ class LiveTvGuideView @JvmOverloads constructor(
                         currentCountryCode = country.code
                         currentCountryName = country.name
                         prefs.edit().putString("selected_country", currentCountryCode).apply()
+                        gridCountryHeader.text = currentCountryName
                         populateCountryChips()
                         loadChannelsAndProgrammes()
                     }
@@ -737,7 +891,7 @@ class LiveTvGuideView @JvmOverloads constructor(
                             }
                             KeyEvent.KEYCODE_DPAD_LEFT -> {
                                 if (chipIndex == 0) {
-                                    searchBoxView.requestFocus()
+                                    searchEditText.requestFocus()
                                     true
                                 } else false
                             }
@@ -766,7 +920,11 @@ class LiveTvGuideView @JvmOverloads constructor(
                 setTextSize(TypedValue.COMPLEX_UNIT_PX, px(13).toFloat())
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(if (isSelected) Color.WHITE else Color.parseColor("#C7CCD6"))
-                text = if (country.code == "ALL") "•••" else country.code
+                text = when {
+                    country.code.equals("all", ignoreCase = true) -> "ALL"
+                    country.code.length <= 3 -> country.code.uppercase(Locale.getDefault())
+                    else -> country.name.take(3).uppercase(Locale.getDefault())
+                }
                 background = GradientDrawable().apply {
                     setColor(if (isSelected) Color.parseColor("#090B10") else Color.parseColor("#1FFFFFFF"))
                     cornerRadius = px(8).toFloat()
@@ -926,7 +1084,7 @@ class LiveTvGuideView @JvmOverloads constructor(
                         }
                         KeyEvent.KEYCODE_DPAD_UP -> {
                             if (rowIndex == 0) {
-                                searchBoxView.requestFocus()
+                                searchEditText.requestFocus()
                                 true
                             } else false
                         }
@@ -996,10 +1154,26 @@ class LiveTvGuideView @JvmOverloads constructor(
         }
 
         val progs = programmesMap[channel.channelId] ?: emptyList()
+        val effectiveProgs = if (progs.isEmpty()) {
+            val windowEnd = timelineStartMs + (halfHourMs * 8)
+            listOf(
+                ProgrammeItem(
+                    channelId = channel.channelId,
+                    start = timelineStartMs,
+                    end = windowEnd,
+                    title = channel.name.ifBlank { "Live Broadcast" },
+                    genre = null,
+                    imageUri = channel.logoUri,
+                    hasCatchup = false
+                )
+            )
+        } else {
+            progs
+        }
         val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
 
-        for (prog in progs) {
-            val progIndex = progs.indexOf(prog)
+        for (prog in effectiveProgs) {
+            val progIndex = effectiveProgs.indexOf(prog)
             val durationMs = Math.max(prog.end - prog.start, halfHourMs)
             val blockWidth = (durationMs.toDouble() / halfHourMs * slotWidthPx).toInt() - px(6)
             val isAiring = prog.isAiringNow(now)
@@ -1104,7 +1278,11 @@ class LiveTvGuideView @JvmOverloads constructor(
             val firstRow = programmesMatrixContainer.getChildAt(0) as? LinearLayout
             if (firstRow != null && firstRow.childCount > 0) {
                 firstRow.getChildAt(0).requestFocus()
+            } else if (channelsColumnContainer.childCount > 0) {
+                channelsColumnContainer.getChildAt(0).requestFocus()
             }
+        } else if (channelsColumnContainer.childCount > 0) {
+            channelsColumnContainer.getChildAt(0).requestFocus()
         }
     }
 
@@ -1222,29 +1400,6 @@ class LiveTvGuideView @JvmOverloads constructor(
         }
     }
 
-    private fun showSearchInputDialog() {
-        val input = EditText(context).apply {
-            hint = "Search channel or programme"
-            setText(searchQuery)
-            selectAll()
-        }
-        AlertDialog.Builder(context)
-            .setTitle("Search Channels")
-            .setView(input)
-            .setPositiveButton("Search") { _, _ ->
-                val query = input.text.toString().trim()
-                searchQuery = query
-                searchTextView.text = if (query.isNotEmpty()) query else "Search channels"
-                loadChannelsAndProgrammes()
-            }
-            .setNegativeButton("Clear") { _, _ ->
-                searchQuery = ""
-                searchTextView.text = "Search channels"
-                loadChannelsAndProgrammes()
-            }
-            .show()
-    }
-
     private fun launchVoiceSearch() {
         try {
             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
@@ -1253,7 +1408,9 @@ class LiveTvGuideView @JvmOverloads constructor(
             }
             context.startActivity(intent)
         } catch (e: Exception) {
-            showSearchInputDialog()
+            searchEditText.requestFocus()
+            val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            imm?.showSoftInput(searchEditText, InputMethodManager.SHOW_IMPLICIT)
         }
     }
 
@@ -1261,10 +1418,22 @@ class LiveTvGuideView @JvmOverloads constructor(
         if (event.action == KeyEvent.ACTION_DOWN) {
             when (event.keyCode) {
                 KeyEvent.KEYCODE_BACK -> {
+                    if (searchEditText.hasFocus()) {
+                        val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                        imm?.hideSoftInputFromWindow(searchEditText.windowToken, 0)
+                        if (searchQuery.isNotEmpty()) {
+                            searchEditText.setText("")
+                            return true
+                        }
+                        onBackToTopBar?.invoke()
+                        return true
+                    }
+                    if (errorStateContainer.visibility == View.VISIBLE && searchQuery.isNotEmpty()) {
+                        searchEditText.setText("")
+                        return true
+                    }
                     if (searchQuery.isNotEmpty()) {
-                        searchQuery = ""
-                        searchTextView.text = "Search channels"
-                        loadChannelsAndProgrammes()
+                        searchEditText.setText("")
                         return true
                     }
                     val currentFocus = findFocus()
@@ -1272,7 +1441,7 @@ class LiveTvGuideView @JvmOverloads constructor(
                         countryChipsScroll.requestFocus()
                         return true
                     }
-                    if (currentFocus != null && (currentFocus == searchBoxView || isViewInCountryChips(currentFocus))) {
+                    if (currentFocus != null && (currentFocus == searchEditText || currentFocus == searchBoxView || isViewInCountryChips(currentFocus))) {
                         onBackToTopBar?.invoke()
                         return true
                     }

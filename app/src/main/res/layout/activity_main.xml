@@ -51,11 +51,6 @@
         android:layout_width="0dp"
         android:layout_height="0dp"
         android:visibility="gone" />
-    <ImageView
-        android:id="@+id/systemSettings"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:visibility="gone" />
 
     <!-- 3. Main Home Content: safe area 48dp (96px) horizontal, 27dp (54px) vertical -->
     <RelativeLayout
@@ -253,7 +248,7 @@
                     android:contentDescription="@string/sources"
                     android:focusable="true"
                     android:padding="6dp"
-                    android:src="@drawable/ic_sources"
+                    android:src="@drawable/ic_tv"
                     android:visibility="gone" />
 
                 <!-- Search Button -->
@@ -268,7 +263,19 @@
                     android:padding="6dp"
                     android:src="@drawable/ic_search" />
 
-                <!-- Settings Button -->
+                <!-- Android System Settings Button -->
+                <ImageView
+                    android:id="@+id/systemSettings"
+                    android:layout_width="@dimen/top_button_size"
+                    android:layout_height="@dimen/top_button_size"
+                    android:layout_marginStart="8dp"
+                    android:background="@drawable/bg_circle_button"
+                    android:contentDescription="@string/act_settings"
+                    android:focusable="true"
+                    android:padding="6dp"
+                    android:src="@drawable/ic_settings" />
+
+                <!-- Launcher Settings Button -->
                 <ImageView
                     android:id="@+id/launcherSettings"
                     android:layout_width="@dimen/top_button_size"
@@ -278,7 +285,7 @@
                     android:contentDescription="@string/plume_settings"
                     android:focusable="true"
                     android:padding="6dp"
-                    android:src="@drawable/ic_settings" />
+                    android:src="@drawable/ic_tune" />
             </LinearLayout>
         </RelativeLayout>
 

@@ -18,7 +18,7 @@ class LiveTvRepository(private val context: Context) {
         const val ONYX_DEBUG_PACKAGE = "com.onyxtv.app.debug"
         @Deprecated("Replaced by ONYX_PACKAGE", ReplaceWith("ONYX_PACKAGE"))
         const val NYX_PACKAGE = ONYX_PACKAGE
-        const val QUERY_TIMEOUT_MS = 2000L
+        const val QUERY_TIMEOUT_MS = 15000L
 
         fun resolveActivePackage(context: Context): String {
             val pm = context.packageManager

@@ -2615,7 +2615,22 @@ class MainActivity : Activity() {
         try {
             startActivity(Intent(action, data))
         } catch (e: Exception) {
-            startActivity(Intent(Settings.ACTION_SETTINGS))
+            try {
+                startActivity(Intent(Settings.ACTION_SETTINGS))
+            } catch (e2: Exception) {
+                try {
+                    startActivity(Intent("android.settings.SETTINGS"))
+                } catch (e3: Exception) {
+                    try {
+                        val intent = Intent().apply {
+                            component = ComponentName("com.android.tv.settings", "com.android.tv.settings.MainSettings")
+                        }
+                        startActivity(intent)
+                    } catch (e4: Exception) {
+                        toast(getString(R.string.cant_open_settings))
+                    }
+                }
+            }
         }
     }
 
@@ -3408,6 +3423,7 @@ class MainActivity : Activity() {
         R.id.wifi to "wifi",
         R.id.sourcesButton to "sources",
         R.id.searchButton to "search",
+        R.id.systemSettings to "system",
         R.id.launcherSettings to "plume"
     )
 
@@ -3426,7 +3442,13 @@ class MainActivity : Activity() {
             if (plumeIdx >= 0) list.add(plumeIdx, "search") else list.add("search")
             list
         } else parsed
-        return withSearch.mapNotNull { key -> TOP_KEYS.entries.firstOrNull { it.value == key }?.key }
+        val withSystem = if ("system" !in withSearch) {
+            val list = withSearch.toMutableList()
+            val plumeIdx = list.indexOf("plume")
+            if (plumeIdx >= 0) list.add(plumeIdx, "system") else list.add("system")
+            list
+        } else withSearch
+        return withSystem.mapNotNull { key -> TOP_KEYS.entries.firstOrNull { it.value == key }?.key }
     }
 
     /** What is really on screen: Sources stays out while the TV has no input. */
@@ -3449,6 +3471,23 @@ class MainActivity : Activity() {
             if (v.parent == null) {
                 bar.addView(v, Math.min(start + i, bar.childCount), lp)
             }
+        }
+        updateTopBarFocus()
+    }
+
+    private fun updateTopBarFocus() {
+        val shown = shownTop().mapNotNull { findViewById<View>(it) }
+        val tabFavorites = findViewById<View>(R.id.tabFavorites)
+
+        if (shown.isEmpty()) return
+
+        tabFavorites?.nextFocusRightId = shown.first().id
+
+        for (i in shown.indices) {
+            val curr = shown[i]
+            curr.nextFocusLeftId = if (i > 0) shown[i - 1].id else R.id.tabFavorites
+            curr.nextFocusRightId = if (i < shown.size - 1) shown[i + 1].id else curr.id
+            curr.nextFocusDownId = R.id.heroWatchButton
         }
     }
 
@@ -3874,21 +3913,23 @@ class MainActivity : Activity() {
             }
         }
 
-        // Setup Top Right Action Buttons: Wi-Fi, Inputs, Search, Settings
+        // Setup Top Right Action Buttons: Wi-Fi, Inputs, Search, System Settings, Launcher Settings
         val wifiBtn = findViewById<ImageView>(R.id.wifi)
         val sourcesBtn = findViewById<ImageView>(R.id.sourcesButton)
         val searchBtn = findViewById<ImageView>(R.id.searchButton)
+        val systemSettingsBtn = findViewById<ImageView>(R.id.systemSettings)
         val settingsBtn = findViewById<ImageView>(R.id.launcherSettings)
 
         wifiBtn?.setOnClickListener { unlock { openSettings(Settings.ACTION_WIFI_SETTINGS) } }
         sourcesBtn?.setOnClickListener { showSources(it) }
         searchBtn?.setOnClickListener { openAllApps() }
+        systemSettingsBtn?.setOnClickListener { unlock { openSettings(Settings.ACTION_SETTINGS) } }
         settingsBtn?.setOnClickListener { unlock { openLauncherSettings() } }
 
         // Inputs button shown only if TV input sources exist
         sourcesBtn?.visibility = if (sources.isNotEmpty()) View.VISIBLE else View.GONE
 
-        listOf(wifiBtn, sourcesBtn, searchBtn, settingsBtn).forEach { btn ->
+        listOf(wifiBtn, sourcesBtn, searchBtn, systemSettingsBtn, settingsBtn).forEach { btn ->
             btn?.let {
                 TvFocusHelper.attach(it, cornerRadiusPx = dp(14).toFloat(), isButton = true, isCircle = true)
             }
@@ -3903,17 +3944,10 @@ class MainActivity : Activity() {
         tabSeries?.nextFocusLeftId = R.id.tabMovies
         tabSeries?.nextFocusRightId = R.id.tabFavorites
         tabFavorites?.nextFocusLeftId = R.id.tabSeries
-        tabFavorites?.nextFocusRightId = if (wifiBtn?.visibility == View.VISIBLE) R.id.wifi else R.id.searchButton
 
-        wifiBtn?.nextFocusLeftId = R.id.tabFavorites
-        wifiBtn?.nextFocusRightId = if (sourcesBtn?.visibility == View.VISIBLE) R.id.sourcesButton else R.id.searchButton
-        sourcesBtn?.nextFocusLeftId = R.id.wifi
-        sourcesBtn?.nextFocusRightId = R.id.searchButton
-        searchBtn?.nextFocusLeftId = if (sourcesBtn?.visibility == View.VISIBLE) R.id.sourcesButton else (if (wifiBtn?.visibility == View.VISIBLE) R.id.wifi else R.id.tabFavorites)
-        searchBtn?.nextFocusRightId = R.id.launcherSettings
-        settingsBtn?.nextFocusLeftId = R.id.searchButton
+        applyTopBar()
 
-        listOf(tabHome, tabLiveTv, tabMovies, tabSeries, tabFavorites, wifiBtn, sourcesBtn, searchBtn, settingsBtn).forEach {
+        listOf(tabHome, tabLiveTv, tabMovies, tabSeries, tabFavorites).forEach {
             it?.nextFocusDownId = R.id.heroWatchButton
         }
 
