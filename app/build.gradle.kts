@@ -97,6 +97,7 @@ android {
 }
 
 dependencies {
+    implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.palette:palette-ktx:1.0.0")
     testImplementation("junit:junit:4.13.2")
 }

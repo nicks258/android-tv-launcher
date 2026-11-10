@@ -1,0 +1,9 @@
+{
+  "versionCode": 1,
+  "versionName": "1.0.0",
+  "apkUrl": "https://iptv-harbor.web.app/onyx-tv.bin",
+  "apkSize": 4083662,
+  "sha256": "ded30cc4f770c193f8b232372317379d86dda8d0cfbdc3d0320e601c60127ee1",
+  "releasedAt": "2026-11-09T22:00:00Z",
+  "releaseNotes": "Initial automated release of Onyx TV with Leanback Compose and Firebase OTA updates."
+}

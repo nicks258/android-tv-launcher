@@ -88,6 +88,8 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import java.io.File
+import java.io.FileOutputStream
+import androidx.core.content.FileProvider
 import java.lang.ref.WeakReference
 import java.io.IOException
 import java.io.InputStream
@@ -5172,20 +5174,86 @@ class MainActivity : Activity() {
     private fun myVersion() = packageManager.getPackageInfo(packageName, 0).versionName.orEmpty()
 
     /** The newer version a check found, if any (null again once it's installed). */
-    private fun availableUpdate() = prefs.getString("upd_ver", null)?.takeIf { newerVersion(it, myVersion()) }
+    private fun availableUpdate(): String? {
+        val ver = prefs.getString("upd_ver", null) ?: return null
+        val vcode = prefs.getInt("upd_vcode", 0)
+        return if (vcode > BuildConfig.VERSION_CODE || (ver.isNotBlank() && newerVersion(ver, myVersion()))) ver else null
+    }
 
     private fun checkUpdate(force: Boolean) {
         if (checking || !force && System.currentTimeMillis() - prefs.getLong("upd_time", 0) < 24 * 3600_000L) return
         checking = true
         if (force) renderSettings(R.string.updates)
         io.execute {
-            val latest = try {
-                getJson("https://api.github.com/repos/$REPO/releases/latest").getString("tag_name").removePrefix("v")
+            var foundUpdate = false
+            var latestVer: String? = null
+            var remoteCode = 0
+            var downloadUrl = OTA_DEFAULT_APK_URL
+            var releaseNotes = ""
+            var apkSize = 0L
+
+            // 1. Try Firebase Hosting primary endpoint
+            try {
+                val json = getJson(OTA_FIREBASE_URL)
+                remoteCode = json.optInt("versionCode", 0)
+                val rawVer = json.optString("versionName", "").trim()
+                latestVer = if (rawVer.isNotEmpty()) rawVer else if (remoteCode > 0) "1.6.$remoteCode" else null
+                downloadUrl = json.optString("apkUrl", OTA_DEFAULT_APK_URL)
+                releaseNotes = json.optString("releaseNotes", "")
+                apkSize = json.optLong("apkSize", 0L)
+                foundUpdate = (remoteCode > BuildConfig.VERSION_CODE) ||
+                        (!latestVer.isNullOrBlank() && newerVersion(latestVer, myVersion()))
+                android.util.Log.d("Plume", "Firebase OTA checked: v$latestVer (code $remoteCode), foundUpdate=$foundUpdate")
             } catch (e: Exception) {
-                android.util.Log.w("Plume", "update check failed ($e)")
-                null
+                android.util.Log.w("Plume", "Firebase primary update check failed: $e, trying fallback endpoint")
+                // 2. Try Firebase fallback endpoint
+                try {
+                    val json = getJson(OTA_FIREBASE_FALLBACK_URL)
+                    remoteCode = json.optInt("versionCode", 0)
+                    val rawVer = json.optString("versionName", "").trim()
+                    latestVer = if (rawVer.isNotEmpty()) rawVer else if (remoteCode > 0) "1.6.$remoteCode" else null
+                    downloadUrl = json.optString("apkUrl", OTA_DEFAULT_APK_URL)
+                    releaseNotes = json.optString("releaseNotes", "")
+                    apkSize = json.optLong("apkSize", 0L)
+                    foundUpdate = (remoteCode > BuildConfig.VERSION_CODE) ||
+                            (!latestVer.isNullOrBlank() && newerVersion(latestVer, myVersion()))
+                    android.util.Log.d("Plume", "Firebase fallback OTA checked: v$latestVer, foundUpdate=$foundUpdate")
+                } catch (e2: Exception) {
+                    android.util.Log.w("Plume", "Firebase fallback update check failed: $e2, trying GitHub fallback")
+                    // 3. Fallback to GitHub releases API
+                    try {
+                        val ghJson = getJson("https://api.github.com/repos/$REPO/releases/latest")
+                        latestVer = ghJson.getString("tag_name").removePrefix("v")
+                        releaseNotes = ghJson.optString("body", "")
+                        downloadUrl = "https://github.com/$REPO/releases/download/v$latestVer/Plume.apk"
+                        foundUpdate = !latestVer.isNullOrBlank() && newerVersion(latestVer, myVersion())
+                    } catch (e3: Exception) {
+                        android.util.Log.w("Plume", "All update checks failed: $e3")
+                    }
+                }
             }
-            if (latest != null) prefs.edit().putString("upd_ver", latest).putLong("upd_time", System.currentTimeMillis()).apply()
+
+            if (foundUpdate && latestVer != null) {
+                prefs.edit()
+                    .putString("upd_ver", latestVer)
+                    .putInt("upd_vcode", remoteCode)
+                    .putString("upd_url", downloadUrl)
+                    .putString("upd_notes", releaseNotes)
+                    .putLong("upd_size", apkSize)
+                    .putLong("upd_time", System.currentTimeMillis())
+                    .apply()
+            } else if (latestVer != null) {
+                // Successfully contacted server and verified client is fully up to date
+                prefs.edit()
+                    .remove("upd_ver")
+                    .remove("upd_vcode")
+                    .remove("upd_url")
+                    .remove("upd_notes")
+                    .remove("upd_size")
+                    .putLong("upd_time", System.currentTimeMillis())
+                    .apply()
+            }
+
             ui.post {
                 if (isDestroyed) return@post
                 checking = false
@@ -5194,7 +5262,7 @@ class MainActivity : Activity() {
                     prefs.edit().putString("upd_told", ver).apply()
                     if (!force) toast(getString(R.string.update_available_toast, ver), long = true)
                 } else if (force) {
-                    toast(if (latest == null) getString(R.string.update_check_failed) else getString(R.string.up_to_date_toast))
+                    toast(if (latestVer == null) getString(R.string.update_check_failed) else getString(R.string.up_to_date_toast))
                 }
                 updateBadge()
                 if (settingsScrim.visibility == View.VISIBLE) renderSettings(R.string.updates)
@@ -5207,14 +5275,19 @@ class MainActivity : Activity() {
         prefs.edit().putString("seen_notes", myVersion()).apply()
         updateBadge()
         val ver = availableUpdate()
-        showPage(getString(R.string.whats_new_title, myVersion()), listOf(
+        val remoteNotes = prefs.getString("upd_notes", null)?.takeIf { it.isNotBlank() }
+        showPage(getString(R.string.whats_new_title, ver ?: myVersion()), listOf(
             if (ver != null) page(getString(R.string.install_update, ver)) { installUpdate(ver) }
             else page(getString(R.string.check_updates)) { checkUpdate(force = true) },
         ), back = { renderSettings(R.string.updates) })
+
+        val notesRaw = if (ver != null && !remoteNotes.isNullOrBlank()) remoteNotes else getString(R.string.whats_new)
         // Focusable, lit on focus, so Down walks through notes longer than the panel and it scrolls along.
-        getString(R.string.whats_new).split('\n').forEach {
+        notesRaw.split('\n').forEach { line ->
+            val it = line.trim()
+            if (it.isBlank()) return@forEach
             if (it.startsWith("#")) {
-                settingsList.addView(label(it.substring(1), 13f).apply {
+                settingsList.addView(label(it.removePrefix("#").trim(), 13f).apply {
                     setTypeface(typeface, Typeface.BOLD)
                     setPadding(dp(14), dp(18), dp(14), dp(2))
                 })
@@ -5230,8 +5303,10 @@ class MainActivity : Activity() {
                 setPadding(dp(14), dp(10), dp(14), dp(2))
             })
         }
-        settingsList.getChildAt(0).nextFocusDownId = View.NO_ID // showPage stops Down at its last row
-        settingsList.getChildAt(settingsList.childCount - 1).let { it.id = View.generateViewId(); it.nextFocusDownId = it.id }
+        if (settingsList.childCount > 0) {
+            settingsList.getChildAt(0).nextFocusDownId = View.NO_ID // showPage stops Down at its last row
+            settingsList.getChildAt(settingsList.childCount - 1).let { it.id = View.generateViewId(); it.nextFocusDownId = it.id }
+        }
     }
 
     /** A What's new entry with a bullet, its **marked** words bold and the marks removed. */
@@ -5273,9 +5348,11 @@ class MainActivity : Activity() {
         }
         updating = true
         renderSettings(R.string.updates)
+        val apkUrl = prefs.getString("upd_url", null) ?: OTA_DEFAULT_APK_URL
         val installer = packageManager.packageInstaller
         io.execute {
-            val ok = try {
+            var installTriggered = false
+            try {
                 val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
                 params.setAppPackageName(packageName)
                 // Android 12+ can skip the confirm box when we're the app's installer; otherwise Android asks.
@@ -5283,7 +5360,7 @@ class MainActivity : Activity() {
                 val id = installer.createSession(params)
                 installer.openSession(id).use { session ->
                     try {
-                        openStream("https://github.com/$REPO/releases/download/v$ver/Plume.apk").use { input ->
+                        openStream(apkUrl, connectTimeoutMs = 15000, readTimeoutMs = 60000).use { input ->
                             session.openWrite("Plume.apk", 0, -1).use { out ->
                                 input.copyTo(out)
                                 session.fsync(out)
@@ -5298,19 +5375,47 @@ class MainActivity : Activity() {
                         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
                     session.commit(done.intentSender)
                 }
-                true
+                installTriggered = true
             } catch (e: Exception) {
-                android.util.Log.w("Plume", "update download failed ($e)")
-                false
+                android.util.Log.w("Plume", "PackageInstaller session failed ($e), attempting FileProvider fallback")
+                installTriggered = tryFileProviderInstall(apkUrl)
             }
             ui.post {
                 if (isDestroyed) return@post
-                if (!ok) {
+                if (!installTriggered) {
                     updating = false
                     toast(getString(R.string.update_download_failed), long = true)
                 }
                 if (settingsScrim.visibility == View.VISIBLE) renderSettings(R.string.updates)
             }
+        }
+    }
+
+    private fun tryFileProviderInstall(apkUrl: String): Boolean {
+        return try {
+            val updatesDir = File(cacheDir, "updates").apply { mkdirs() }
+            val apkFile = File(updatesDir, "launcher-update.apk")
+            if (apkFile.exists()) apkFile.delete()
+
+            openStream(apkUrl, connectTimeoutMs = 15000, readTimeoutMs = 60000).use { input ->
+                FileOutputStream(apkFile).use { out ->
+                    input.copyTo(out)
+                    out.flush()
+                }
+            }
+
+            val authority = "$packageName.fileprovider"
+            val uri: Uri = FileProvider.getUriForFile(this, authority, apkFile)
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(intent)
+            true
+        } catch (e: Exception) {
+            android.util.Log.e("Plume", "FileProvider install failed ($e)")
+            false
         }
     }
 
@@ -5899,11 +6004,13 @@ class MainActivity : Activity() {
         return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
     }
 
-    private fun openStream(uri: String): InputStream =
+    private fun openStream(uri: String, connectTimeoutMs: Int = 10000, readTimeoutMs: Int = 15000): InputStream =
         if (uri.startsWith("http")) {
             (URL(uri).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 5000
-                readTimeout = 5000
+                connectTimeout = connectTimeoutMs
+                readTimeout = readTimeoutMs
+                instanceFollowRedirects = true
+                setRequestProperty("User-Agent", "PlumeLauncher-AndroidTV")
             }.inputStream
         } else {
             contentResolver.openInputStream(Uri.parse(uri)) ?: throw IOException("no stream for $uri")
@@ -6108,6 +6215,9 @@ class MainActivity : Activity() {
         )
         const val CHOSEN = "✓"
         const val REPO = "nicks258/android-tv-launcher"
+        const val OTA_FIREBASE_URL = "https://iptv-harbor.web.app/launcher-version.json"
+        const val OTA_FIREBASE_FALLBACK_URL = "https://iptv-harbor.web.app/launcher/version.json"
+        const val OTA_DEFAULT_APK_URL = "https://iptv-harbor.web.app/launcher.bin"
         const val UPDATE_STATUS = "dev.plume.UPDATE_STATUS"
         const val WRITE_EPG ="com.android.providers.tv.permission.WRITE_EPG_DATA"
         const val TV_SETTINGS = "com.android.tv.settings"

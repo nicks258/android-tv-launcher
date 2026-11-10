@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Super Android TV Suite - Onyx TV &amp; Plume Launcher</title>
+  <style>
+    :root {
+      --bg: #090b10;
+      --surface: #121620;
+      --card: #1b2130;
+      --accent-onyx: #00d2ff;
+      --accent-plume: #ff6b4a;
+      --accent-emerald: #00e5a3;
+      --text: #ffffff;
+      --text-muted: #8c97ab;
+      --border: #263147;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 32px 20px;
+    }
+    .wrapper {
+      max-width: 960px;
+      width: 100%;
+    }
+    .header {
+      text-align: center;
+      margin-bottom: 32px;
+    }
+    .main-badge {
+      display: inline-block;
+      background: rgba(0, 210, 255, 0.12);
+      color: var(--accent-onyx);
+      border: 1px solid rgba(0, 210, 255, 0.3);
+      padding: 5px 16px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 14px;
+      letter-spacing: 0.5px;
+    }
+    h1 {
+      font-size: 36px;
+      font-weight: 800;
+      margin-bottom: 8px;
+      letter-spacing: -0.5px;
+    }
+    h1 span.onyx { color: var(--accent-onyx); }
+    h1 span.plume { color: var(--accent-plume); }
+    p.lead {
+      color: var(--text-muted);
+      font-size: 16px;
+      max-width: 600px;
+      margin: 0 auto;
+      line-height: 1.5;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 24px;
+      margin-bottom: 32px;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 32px;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      position: relative;
+      transition: border-color 0.2s ease, transform 0.2s ease;
+    }
+    .card:hover {
+      transform: translateY(-3px);
+    }
+    .card.onyx-card:hover {
+      border-color: rgba(0, 210, 255, 0.5);
+    }
+    .card.plume-card:hover {
+      border-color: rgba(255, 107, 74, 0.5);
+    }
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    .app-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+    }
+    .onyx-icon {
+      background: linear-gradient(135deg, rgba(0,210,255,0.2), rgba(0,136,204,0.3));
+      border: 1px solid rgba(0,210,255,0.4);
+    }
+    .plume-icon {
+      background: linear-gradient(135deg, rgba(255,107,74,0.2), rgba(255,59,48,0.3));
+      border: 1px solid rgba(255,107,74,0.4);
+    }
+    .app-badge {
+      font-size: 12px;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 999px;
+    }
+    .badge-onyx {
+      background: rgba(0, 210, 255, 0.15);
+      color: var(--accent-onyx);
+    }
+    .badge-plume {
+      background: rgba(255, 107, 74, 0.15);
+      color: var(--accent-plume);
+    }
+    .app-title {
+      font-size: 24px;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+    .app-desc {
+      color: var(--text-muted);
+      font-size: 14px;
+      line-height: 1.5;
+      margin-bottom: 20px;
+      min-height: 42px;
+    }
+    .version-box {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 16px;
+      margin-bottom: 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .version-label {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 2px;
+    }
+    .version-num {
+      font-size: 15px;
+      font-weight: 700;
+    }
+    .version-status {
+      color: var(--accent-emerald);
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .btn-download {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 14px 20px;
+      border-radius: 12px;
+      font-size: 15px;
+      font-weight: 700;
+      text-decoration: none;
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+    .btn-download.btn-onyx {
+      background: linear-gradient(135deg, var(--accent-onyx) 0%, #0088cc 100%);
+      color: #090b10;
+      box-shadow: 0 8px 20px rgba(0, 210, 255, 0.25);
+    }
+    .btn-download.btn-onyx:hover {
+      box-shadow: 0 12px 24px rgba(0, 210, 255, 0.4);
+      transform: translateY(-2px);
+    }
+    .btn-download.btn-plume {
+      background: linear-gradient(135deg, var(--accent-plume) 0%, #d83d1c 100%);
+      color: #ffffff;
+      box-shadow: 0 8px 20px rgba(255, 107, 74, 0.25);
+    }
+    .btn-download.btn-plume:hover {
+      box-shadow: 0 12px 24px rgba(255, 107, 74, 0.4);
+      transform: translateY(-2px);
+    }
+    .features-list {
+      margin-top: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+    .features-list span {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .features-list span strong {
+      color: var(--text);
+    }
+    .install-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+    .install-box h3 {
+      font-size: 16px;
+      margin-bottom: 12px;
+      color: var(--text);
+    }
+    .code-block {
+      background: #06070a;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 13px;
+      color: #a5d6ff;
+      overflow-x: auto;
+      margin-bottom: 8px;
+    }
+    footer {
+      text-align: center;
+      font-size: 13px;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+    footer a {
+      color: var(--accent-onyx);
+      text-decoration: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrapper">
+    <div class="header">
+      <div class="main-badge">⚡ Over-The-Air Firebase Distribution</div>
+      <h1>Super Android <span class="onyx">TV</span> <span class="plume">Suite</span></h1>
+      <p class="lead">Production builds for Android TV with direct In-App OTA updating powered by Firebase Hosting on IPTV-Harbor.</p>
+    </div>
+
+    <div class="grid">
+      <!-- Onyx TV Card -->
+      <div class="card onyx-card" id="onyx">
+        <div>
+          <div class="card-header">
+            <div class="app-icon onyx-icon">📺</div>
+            <div class="app-badge badge-onyx">Leanback Player</div>
+          </div>
+          <div class="app-title">Onyx TV</div>
+          <div class="app-desc">High-performance Leanback IPTV player with Xtream Codes, VLESS proxy automation &amp; EPG.</div>
+
+          <div class="version-box">
+            <div>
+              <div class="version-label">Latest Release</div>
+              <div class="version-num" id="onyxVersionText">Onyx TV v1.0.0</div>
+            </div>
+            <div class="version-status" id="onyxStatus">● Ready</div>
+          </div>
+        </div>
+
+        <div>
+          <a href="onyx-tv.bin" download="onyx-tv.apk" class="btn-download btn-onyx" id="onyxDownloadBtn">
+            <span>⬇ Download Onyx TV APK</span>
+          </a>
+
+          <div class="features-list">
+            <span>✓ <strong>In-App OTA:</strong> Auto-updates inside Settings Screen</span>
+            <span>✓ <strong>VLESS Core:</strong> Zero-buffering remote stream tunneling</span>
+            <span>✓ <strong>Leanback UI:</strong> Optimized for D-pad navigation</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Plume TV Launcher Card -->
+      <div class="card plume-card" id="launcher">
+        <div>
+          <div class="card-header">
+            <div class="app-icon plume-icon">🚀</div>
+            <div class="app-badge badge-plume">Home Launcher</div>
+          </div>
+          <div class="app-title">Plume TV Launcher</div>
+          <div class="app-desc">Minimalist, ultra-responsive Leanback launcher with TV Watch Next, TMDB cards &amp; live OTA.</div>
+
+          <div class="version-box">
+            <div>
+              <div class="version-label">Latest Release</div>
+              <div class="version-num" id="launcherVersionText">Plume Launcher v1.6.4</div>
+            </div>
+            <div class="version-status" id="launcherStatus">● Ready</div>
+          </div>
+        </div>
+
+        <div>
+          <a href="launcher.bin" download="plume-launcher.apk" class="btn-download btn-plume" id="launcherDownloadBtn">
+            <span>⬇ Download Launcher APK</span>
+          </a>
+
+          <div class="features-list">
+            <span>✓ <strong>In-App OTA:</strong> Silent PackageInstaller &amp; FileProvider update</span>
+            <span>✓ <strong>Watch Next:</strong> Instant resume across streaming apps</span>
+            <span>✓ <strong>Zero Bloat:</strong> Lightweight R8-optimized binary (&lt; 4 MB)</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ADB Fast Install -->
+    <div class="install-box">
+      <h3>📲 Direct ADB Installation for Android TV</h3>
+      <div class="code-block">adb connect &lt;YOUR_TV_IP&gt;:5555 &amp;&amp; adb install -r launcher.bin</div>
+      <div class="code-block">adb connect &lt;YOUR_TV_IP&gt;:5555 &amp;&amp; adb install -r onyx-tv.bin</div>
+    </div>
+
+    <footer>
+      OTA Descriptors:
+      <a href="version.json" target="_blank">Onyx TV (version.json)</a> &bull;
+      <a href="launcher-version.json" target="_blank">Plume Launcher (launcher-version.json)</a>
+      <br>
+      Firebase Project: <strong>iptv-harbor</strong> &bull; Firebase Hosting: <strong>iptv-harbor.web.app</strong>
+    </footer>
+  </div>
+
+  <script>
+    // Fetch Onyx TV metadata
+    fetch('version.json')
+      .then(r => r.json())
+      .then(d => {
+        if (d.versionName) {
+          const sizeMB = d.apkSize ? ' (' + (d.apkSize / 1048576).toFixed(1) + ' MB)' : '';
+          document.getElementById('onyxVersionText').textContent = 'v' + d.versionName + ' (Build ' + d.versionCode + ')' + sizeMB;
+        }
+      })
+      .catch(() => {});
+
+    // Fetch Plume Launcher metadata
+    fetch('launcher-version.json')
+      .then(r => r.json())
+      .then(d => {
+        if (d.versionName) {
+          const sizeMB = d.apkSize ? ' (' + (d.apkSize / 1048576).toFixed(1) + ' MB)' : '';
+          document.getElementById('launcherVersionText').textContent = 'v' + d.versionName + ' (Build ' + d.versionCode + ')' + sizeMB;
+        }
+      })
+      .catch(() => {});
+  </script>
+</body>
+</html>

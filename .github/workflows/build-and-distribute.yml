@@ -1,0 +1,207 @@
+name: Build and Distribute Plume TV Launcher
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "app/**"
+      - "gradle/**"
+      - "build.gradle.kts"
+      - "settings.gradle.kts"
+      - ".github/workflows/build-and-distribute.yml"
+  workflow_dispatch:
+    inputs:
+      version_name:
+        description: "Custom version name (leave empty for auto 1.6.<run_number>)"
+        required: false
+        default: ""
+      release_notes:
+        description: "Release notes for this build"
+        required: false
+        default: "Plume TV Launcher update with Firebase OTA support and performance enhancements."
+      deploy_to_firebase:
+        description: "Deploy to Firebase Hosting (iptv-harbor.web.app)"
+        required: true
+        type: choice
+        default: "yes"
+        options:
+          - "yes"
+          - "no"
+
+concurrency:
+  group: android-launcher-build
+  cancel-in-progress: false
+
+jobs:
+  build_and_distribute:
+    name: Build Launcher APK & Distribute to Firebase
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      FIREBASE_PROJECT_ID: iptv-harbor
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine Version
+        id: version
+        run: |
+          RUN_NUM=${{ github.run_number }}
+          if [ -n "${{ github.event.inputs.version_name }}" ]; then
+            VER="${{ github.event.inputs.version_name }}"
+          else
+            VER="1.6.${RUN_NUM}"
+          fi
+          VCODE=$((800 + RUN_NUM))
+          TAG="v${VER}"
+
+          echo "VERSION_NAME=${VER}" >> "$GITHUB_ENV"
+          echo "VERSION_CODE=${VCODE}" >> "$GITHUB_ENV"
+          echo "TAG_NAME=${TAG}" >> "$GITHUB_ENV"
+          echo "version=${VER}" >> "$GITHUB_OUTPUT"
+          echo "code=${VCODE}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Building Plume Launcher version $VER (code $VCODE, tag $TAG)..."
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+          cache: "gradle"
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Setup Signing Keystore
+        run: |
+          if [ -n "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" ]; then
+            echo "Restoring release keystore from RELEASE_KEYSTORE_BASE64 secret..."
+            echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 --decode > app/release.keystore
+          elif [ -f "app/release.keystore" ]; then
+            echo "Using repository app/release.keystore."
+          else
+            echo "Generating signing keystore for automated release..."
+            keytool -genkey -v -keystore app/release.keystore \
+              -storepass android -alias androiddebugkey -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=PlumeLauncher, OU=TV, O=Plume, L=Dubai, S=Dubai, C=AE"
+          fi
+
+      - name: Build Release APK
+        env:
+          VERSION_CODE: ${{ env.VERSION_CODE }}
+          VERSION_NAME: ${{ env.VERSION_NAME }}
+        run: |
+          echo "Building Plume Launcher (versionCode: $VERSION_CODE, versionName: $VERSION_NAME)..."
+          ./gradlew assembleRelease -PversionCode=$VERSION_CODE -PversionName="$VERSION_NAME" --daemon --parallel -x test -x lint
+
+      - name: Validate Release APK
+        run: |
+          APK_PATH="app/build/outputs/apk/release/app-release.apk"
+          if [ ! -f "$APK_PATH" ]; then
+            echo "::error::Release APK not found at $APK_PATH"
+            exit 1
+          fi
+          echo "APK Build Success!"
+          echo "APK Size: $(du -h "$APK_PATH" | cut -f1)"
+          echo "SHA256: $(sha256sum "$APK_PATH" | awk '{print $1}')"
+
+      # -------------------------------------------------------------
+      # GITHUB ACTIONS ARTIFACT
+      # -------------------------------------------------------------
+      - name: Upload APK Artifact to GitHub
+        uses: actions/upload-artifact@v4
+        with:
+          name: plume-launcher-v${{ env.VERSION_NAME }}-build${{ env.VERSION_CODE }}
+          path: app/build/outputs/apk/release/app-release.apk
+          retention-days: 30
+
+      # -------------------------------------------------------------
+      # GITHUB RELEASE
+      # -------------------------------------------------------------
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp app/build/outputs/apk/release/app-release.apk Plume.apk
+          NOTES="${{ github.event.inputs.release_notes || 'Plume TV Launcher update with Firebase OTA updates and Leanback optimizations.' }}"
+          gh release create "${{ env.TAG_NAME }}" Plume.apk \
+            --title "Plume Launcher ${{ env.VERSION_NAME }}" \
+            --notes "$NOTES" \
+            --target main || echo "Release may already exist, proceeding..."
+
+      # -------------------------------------------------------------
+      # PREPARE FIREBASE HOSTING PAYLOAD
+      # -------------------------------------------------------------
+      - name: Prepare Firebase distribution payload
+        if: ${{ github.event_name == 'push' || github.event.inputs.deploy_to_firebase != 'no' }}
+        run: |
+          mkdir -p distribution
+          cp app/build/outputs/apk/release/app-release.apk distribution/launcher.bin
+
+          APK_SIZE=$(stat -c%s "distribution/launcher.bin" 2>/dev/null || stat -f%z "distribution/launcher.bin")
+          APK_SHA256=$(sha256sum "distribution/launcher.bin" | awk '{print $1}')
+          RELEASE_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          RELEASE_NOTES="${{ github.event.inputs.release_notes || github.event.head_commit.message || 'Latest automated release of Plume TV Launcher' }}"
+
+          cat <<EOF > distribution/launcher-version.json
+          {
+            "versionCode": $VERSION_CODE,
+            "versionName": "$VERSION_NAME",
+            "apkUrl": "https://iptv-harbor.web.app/launcher.bin",
+            "apkSize": $APK_SIZE,
+            "sha256": "$APK_SHA256",
+            "releasedAt": "$RELEASE_DATE",
+            "releaseNotes": "$RELEASE_NOTES"
+          }
+          EOF
+
+          mkdir -p distribution/launcher
+          cp distribution/launcher-version.json distribution/launcher/version.json
+
+          echo "Generated distribution/launcher-version.json:"
+          cat distribution/launcher-version.json
+
+          # Preserve Onyx TV assets from live Firebase Hosting so they are not wiped
+          echo "Preserving live Onyx TV assets from Firebase Hosting..."
+          curl -s -f "https://iptv-harbor.web.app/onyx-tv.bin" -o "distribution/onyx-tv.bin" || true
+          curl -s -f "https://iptv-harbor.web.app/version.json" -o "distribution/version.json" || true
+
+      # -------------------------------------------------------------
+      # DEPLOY TO FIREBASE HOSTING
+      # -------------------------------------------------------------
+      - name: Deploy to Firebase Hosting via Token
+        if: ${{ (github.event_name == 'push' || github.event.inputs.deploy_to_firebase != 'no') && secrets.FIREBASE_TOKEN != '' }}
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        run: |
+          echo "Deploying to Firebase Hosting using FIREBASE_TOKEN..."
+          npx --yes firebase-tools deploy --only hosting --project iptv-harbor --token "$FIREBASE_TOKEN" --non-interactive
+
+      - name: Deploy to Firebase Hosting via Service Account
+        if: ${{ (github.event_name == 'push' || github.event.inputs.deploy_to_firebase != 'no') && secrets.FIREBASE_TOKEN == '' }}
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_IPTV_HARBOR }}
+          channelId: live
+          projectId: iptv-harbor
+
+      - name: Summary
+      # -------------------------------------------------------------
+        run: |
+          echo "=================================================="
+          echo "🎉 Plume TV Launcher Build & Distribution Summary"
+          echo "=================================================="
+          echo "Version:         v$VERSION_NAME (Build $VERSION_CODE)"
+          echo "GitHub Release:  ${{ env.TAG_NAME }}"
+          echo "OTA Update URL:  https://iptv-harbor.web.app/launcher-version.json"
+          echo "Direct APK URL:  https://iptv-harbor.web.app/launcher.bin"
+          echo "Web Download:    https://iptv-harbor.web.app/"
+          echo "=================================================="
