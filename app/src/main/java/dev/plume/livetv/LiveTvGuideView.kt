@@ -178,6 +178,22 @@ class LiveTvGuideView @JvmOverloads constructor(
                     launchOnyxChannel(ch.channelId, ch.name, focusedProgramme?.start ?: 0L, focusedProgramme?.hasCatchup == true)
                 }
             }
+
+            setOnKeyListener { _, keyCode, event ->
+                if (event.action == KeyEvent.ACTION_DOWN) {
+                    when (keyCode) {
+                        KeyEvent.KEYCODE_DPAD_UP -> {
+                            onBackToTopBar?.invoke()
+                            true
+                        }
+                        KeyEvent.KEYCODE_DPAD_DOWN -> {
+                            searchEditText.requestFocus()
+                            true
+                        }
+                        else -> false
+                    }
+                } else false
+            }
         }
 
         // Ambient Preview Card - Logo Text hidden by default to match clean ambient design
@@ -1414,39 +1430,34 @@ class LiveTvGuideView @JvmOverloads constructor(
         }
     }
 
+    fun handleBackPressed(): Boolean {
+        if (searchQuery.isNotEmpty()) {
+            val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            imm?.hideSoftInputFromWindow(searchEditText.windowToken, 0)
+            searchEditText.setText("")
+            searchEditText.requestFocus()
+            return true
+        }
+        val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        imm?.hideSoftInputFromWindow(searchEditText.windowToken, 0)
+
+        val currentFocus = findFocus()
+        if (currentFocus != null && isViewInGrid(currentFocus)) {
+            countryChipsScroll.findFocus()
+                ?: countryChipsContainer.getChildAt(0)?.requestFocus()
+                ?: searchEditText.requestFocus()
+            return true
+        }
+        if (currentFocus != null && (currentFocus == searchEditText || currentFocus == searchBoxView || isViewInCountryChips(currentFocus))) {
+            onBackToTopBar?.invoke()
+            return true
+        }
+        return false
+    }
+
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (event.action == KeyEvent.ACTION_DOWN) {
-            when (event.keyCode) {
-                KeyEvent.KEYCODE_BACK -> {
-                    if (searchEditText.hasFocus()) {
-                        val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-                        imm?.hideSoftInputFromWindow(searchEditText.windowToken, 0)
-                        if (searchQuery.isNotEmpty()) {
-                            searchEditText.setText("")
-                            return true
-                        }
-                        onBackToTopBar?.invoke()
-                        return true
-                    }
-                    if (errorStateContainer.visibility == View.VISIBLE && searchQuery.isNotEmpty()) {
-                        searchEditText.setText("")
-                        return true
-                    }
-                    if (searchQuery.isNotEmpty()) {
-                        searchEditText.setText("")
-                        return true
-                    }
-                    val currentFocus = findFocus()
-                    if (currentFocus != null && isViewInGrid(currentFocus)) {
-                        countryChipsScroll.requestFocus()
-                        return true
-                    }
-                    if (currentFocus != null && (currentFocus == searchEditText || currentFocus == searchBoxView || isViewInCountryChips(currentFocus))) {
-                        onBackToTopBar?.invoke()
-                        return true
-                    }
-                }
-            }
+        if (event.action == KeyEvent.ACTION_DOWN && event.keyCode == KeyEvent.KEYCODE_BACK) {
+            if (handleBackPressed()) return true
         }
         return super.dispatchKeyEvent(event)
     }

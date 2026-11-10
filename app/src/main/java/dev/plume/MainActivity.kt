@@ -329,6 +329,13 @@ class MainActivity : Activity() {
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            onBackInvokedDispatcher.registerOnBackInvokedCallback(
+                android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT
+            ) {
+                onBackPressed()
+            }
+        }
         setContentView(R.layout.activity_main)
         glass = GlassLayer(this)
         appRow = findViewById(R.id.appRow)
@@ -501,9 +508,15 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         if (Bing.onChanged === bingChanged) Bing.onChanged = null
-        unregisterReceiver(packageReceiver)
-        applicationContext.getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(net)
-        getSystemService(TvInputManager::class.java)?.unregisterCallback(inputCallback)
+        try {
+            unregisterReceiver(packageReceiver)
+        } catch (_: Exception) {}
+        try {
+            applicationContext.getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(net)
+        } catch (_: Exception) {}
+        try {
+            getSystemService(TvInputManager::class.java)?.unregisterCallback(inputCallback)
+        } catch (_: Exception) {}
         upload?.stop()
         ui.removeCallbacksAndMessages(null) // the clocks and the posts still queued must not use the pools below
         io.shutdownNow()
@@ -873,6 +886,7 @@ class MainActivity : Activity() {
             }
             settingsScrim.visibility == View.VISIBLE -> pageBack?.invoke() ?: closeLauncherSettings()
             allApps.visibility == View.VISIBLE -> closeAllApps()
+            currentTab == "live" && liveTvGuideView?.handleBackPressed() == true -> return
             currentTab != "home" -> switchTab("home")
         }
     }
@@ -3108,17 +3122,31 @@ class MainActivity : Activity() {
             appRow.getChildAt(0)?.requestFocus()
             return true
         }
-        if (e.keyCode == KeyEvent.KEYCODE_BACK && e.action == KeyEvent.ACTION_DOWN) {
-            val toast = findViewById<View>(R.id.launchFailureToast)
-            if (toast?.visibility == View.VISIBLE) {
-                hideLaunchFailureToast()
-                onyxTileView?.requestFocus()
-                return true
+        if (e.keyCode == KeyEvent.KEYCODE_BACK) {
+            if (e.action == KeyEvent.ACTION_DOWN) {
+                val toast = findViewById<View>(R.id.launchFailureToast)
+                if (toast?.visibility == View.VISIBLE) {
+                    hideLaunchFailureToast()
+                    onyxTileView?.requestFocus()
+                    return true
+                }
+                if (settingsScrim.visibility == View.VISIBLE) {
+                    pageBack?.invoke() ?: closeLauncherSettings()
+                    return true
+                }
+                if (allApps.visibility == View.VISIBLE) {
+                    closeAllApps()
+                    return true
+                }
+                if (currentTab == "live" && liveTvGuideView?.handleBackPressed() == true) {
+                    return true
+                }
+                if (currentTab != "home") {
+                    switchTab("home")
+                    return true
+                }
             }
-            if (currentTab != "home") {
-                switchTab("home")
-                return true
-            }
+            return true
         }
         val isDpad = e.keyCode == KeyEvent.KEYCODE_DPAD_LEFT || e.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT ||
             e.keyCode == KeyEvent.KEYCODE_DPAD_UP || e.keyCode == KeyEvent.KEYCODE_DPAD_DOWN
@@ -4700,7 +4728,7 @@ class MainActivity : Activity() {
 
         val contentLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(10), dp(8), dp(10), dp(8))
+            setPadding(dp(10), dp(5), dp(10), dp(4))
             layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)
         }
 
@@ -4729,14 +4757,16 @@ class MainActivity : Activity() {
             setTextColor(Color.WHITE)
             textSize = 12.5f
             typeface = resources.getFont(R.font.sora)
-            setPadding(0, dp(2), 0, 0)
+            setPadding(0, dp(1), 0, 0)
+            includeFontPadding = false
         }
 
         // Subtitle: dynamic based on state & focus
         val subtitleView = TextView(this).apply {
             textSize = 9.5f
             typeface = resources.getFont(R.font.manrope)
-            setPadding(0, dp(2), 0, 0)
+            setPadding(0, dp(1), 0, 0)
+            includeFontPadding = false
         }
 
         contentLayout.addView(topRow)
