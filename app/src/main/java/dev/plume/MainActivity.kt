@@ -4646,7 +4646,7 @@ class MainActivity : Activity() {
         val h = dp(67)
         val pad = dp(3)
         val tile = FrameLayout(this).apply {
-            layoutParams = LinearLayout.LayoutParams(w, h).apply { marginEnd = dp(10) }
+            layoutParams = LinearLayout.LayoutParams(w, h).apply { marginEnd = resources.getDimensionPixelSize(R.dimen.banner_gap) }
             isFocusable = true
             tag = "com.onyxtv.app"
         }
@@ -4788,7 +4788,7 @@ class MainActivity : Activity() {
         val h = dp(67)
         val pad = dp(3)
         val tile = FrameLayout(this).apply {
-            layoutParams = LinearLayout.LayoutParams(w, h).apply { marginEnd = dp(10) }
+            layoutParams = LinearLayout.LayoutParams(w, h).apply { marginEnd = resources.getDimensionPixelSize(R.dimen.banner_gap) }
             isFocusable = true
             tag = a.pkg
         }
@@ -4863,7 +4863,7 @@ class MainActivity : Activity() {
         val h = dp(67)
         val pad = dp(3)
         val tile = FrameLayout(this).apply {
-            layoutParams = LinearLayout.LayoutParams(w, h)
+            layoutParams = LinearLayout.LayoutParams(w, h).apply { marginEnd = resources.getDimensionPixelSize(R.dimen.banner_gap) }
             isFocusable = true
             tag = "all_apps"
         }

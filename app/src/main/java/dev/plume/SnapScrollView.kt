@@ -21,8 +21,9 @@ class SnapScrollView(context: Context, attrs: AttributeSet?) : HorizontalScrollV
     }
 
     override fun computeScrollDeltaToGetChildRectOnScreen(rect: Rect): Int {
-        val left = scrollX + paddingLeft
-        val right = scrollX + width - paddingRight
+        val focusOffset = (8 * resources.displayMetrics.density).toInt()
+        val left = scrollX + paddingLeft + focusOffset
+        val right = scrollX + width - paddingRight - focusOffset
         return when {
             rect.left < left -> rect.left - left
             rect.right > right -> rect.right - right

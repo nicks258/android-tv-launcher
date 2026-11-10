@@ -584,16 +584,16 @@
                 android:outlineProvider="background"
                 android:clipToOutline="true">
 
-                <HorizontalScrollView
+                <dev.plume.SnapScrollView
                     android:id="@+id/appScroll"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:clipChildren="true"
+                    android:clipChildren="false"
                     android:clipToPadding="false"
-                    android:paddingStart="24dp"
-                    android:paddingTop="14dp"
-                    android:paddingBottom="14dp"
-                    android:paddingEnd="80dp"
+                    android:paddingStart="@dimen/apps_tray_padding_start"
+                    android:paddingTop="@dimen/apps_tray_padding_vertical"
+                    android:paddingBottom="@dimen/apps_tray_padding_vertical"
+                    android:paddingEnd="@dimen/apps_tray_padding_end"
                     android:scrollbars="none">
 
                     <!-- App Tiles Row -->
@@ -605,7 +605,7 @@
                         android:clipToPadding="false"
                         android:gravity="center_vertical"
                         android:orientation="horizontal" />
-                </HorizontalScrollView>
+                </dev.plume.SnapScrollView>
             </FrameLayout>
 
             <!-- Compatibility views for continue watching (if configured) -->

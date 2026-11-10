@@ -31,7 +31,7 @@ cd "$DIR"
 
 # Assemble Release APK
 echo "📦 Assembling Release APK..."
-./gradlew assembleRelease -PversionCode=805 -PversionName=1.6.5 --daemon --parallel -x test -x lint
+./gradlew assembleRelease -PversionCode=807 -PversionName=1.6.7 --daemon --parallel -x test -x lint
 
 RELEASE_APK="$DIR/app/build/outputs/apk/release/app-release.apk"
 
@@ -53,8 +53,8 @@ RELEASE_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 cat <<EOF > "$DIR/distribution/launcher-version.json"
 {
-  "versionCode": 805,
-  "versionName": "1.6.5",
+  "versionCode": 807,
+  "versionName": "1.6.7",
   "apkUrl": "https://iptv-harbor.web.app/launcher.bin",
   "apkSize": $BYTES,
   "sha256": "$SHA256",

@@ -10,12 +10,17 @@
     <dimen name="tv_safe_horizontal">48dp</dimen>
     <dimen name="tv_safe_vertical">27dp</dimen>
 
-    <!-- Banners & Layout: 252x134 px, 20px gap, 56px action buttons -->
+    <!-- Banners & Layout: 252x134 px, 24px gap, 56px action buttons -->
     <dimen name="banner_width">126dp</dimen>    <!-- 252px -->
     <dimen name="banner_height">67dp</dimen>    <!-- 134px -->
-    <dimen name="banner_gap">10dp</dimen>       <!-- 20px -->
+    <dimen name="banner_gap">12dp</dimen>       <!-- 24px -->
     <dimen name="row_gap">16dp</dimen>          <!-- 32px -->
     <dimen name="top_button_size">28dp</dimen>  <!-- 56px -->
+
+    <!-- Apps Tray Padding (comfortable clearance for focus ring & scaling) -->
+    <dimen name="apps_tray_padding_start">36dp</dimen>
+    <dimen name="apps_tray_padding_vertical">22dp</dimen>
+    <dimen name="apps_tray_padding_end">96dp</dimen>
 
     <!-- Focus Specs -->
     <dimen name="focus_ring_width">2dp</dimen>  <!-- 4px -->

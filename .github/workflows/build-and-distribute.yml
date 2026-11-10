@@ -38,6 +38,8 @@ jobs:
     name: Build Launcher APK & Distribute to Firebase
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: write
 
     env:
       FIREBASE_PROJECT_ID: iptv-harbor
@@ -52,13 +54,23 @@ jobs:
       - name: Determine Version
         id: version
         run: |
-          RUN_NUM=${{ github.run_number }}
+          # Determine version: check highest existing git tag (e.g. v1.6.6)
+          LATEST_TAG=$(git tag -l "v1.6.*" | sort -V | tail -n 1)
+          LATEST_NUM=6
+          if [ -n "$LATEST_TAG" ]; then
+            TAG_NUM=$(echo "$LATEST_TAG" | sed 's/v1\.6\.//')
+            if [ "$TAG_NUM" -ge "$LATEST_NUM" ] 2>/dev/null; then
+              LATEST_NUM=$TAG_NUM
+            fi
+          fi
+          NEXT_NUM=$((LATEST_NUM + 1))
+
           if [ -n "${{ github.event.inputs.version_name }}" ]; then
             VER="${{ github.event.inputs.version_name }}"
           else
-            VER="1.6.${RUN_NUM}"
+            VER="1.6.${NEXT_NUM}"
           fi
-          VCODE=$((800 + RUN_NUM))
+          VCODE=$((800 + NEXT_NUM))
           TAG="v${VER}"
 
           echo "VERSION_NAME=${VER}" >> "$GITHUB_ENV"
