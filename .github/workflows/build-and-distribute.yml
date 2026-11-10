@@ -54,6 +54,9 @@ jobs:
       - name: Determine Version
         id: version
         run: |
+          # Fetch all remote tags so we have the full tag history
+          git fetch --tags --force
+
           # Determine version: check highest existing git tag (e.g. v1.6.6)
           LATEST_TAG=$(git tag -l "v1.6.*" | sort -V | tail -n 1)
           LATEST_NUM=6
@@ -143,11 +146,25 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cp app/build/outputs/apk/release/app-release.apk Plume.apk
-          NOTES="${{ github.event.inputs.release_notes || 'Plume TV Launcher update with Firebase OTA updates and Leanback optimizations.' }}"
-          gh release create "${{ env.TAG_NAME }}" Plume.apk \
-            --title "Plume Launcher ${{ env.VERSION_NAME }}" \
-            --notes "$NOTES" \
-            --target main || echo "Release may already exist, proceeding..."
+
+          if [ -n "${{ github.event.inputs.release_notes }}" ]; then
+            NOTES="${{ github.event.inputs.release_notes }}"
+          else
+            CHANGELOG=$(git log -5 --pretty=format:"- %s (%h)")
+            NOTES=$(printf "### Plume Launcher %s\n\n#### Changes in this build:\n%s\n\n---\n📺 **How to update directly from TV:**\n1. On your Android TV, open **Plume settings → Updates**.\n2. Select **Check for updates** (or wait for the auto-announcement).\n3. Click **Install update %s**." "${{ env.VERSION_NAME }}" "$CHANGELOG" "${{ env.VERSION_NAME }}")
+          fi
+
+          echo "Publishing GitHub Release for ${{ env.TAG_NAME }}..."
+          if gh release view "${{ env.TAG_NAME }}" >/dev/null 2>&1; then
+            echo "Release ${{ env.TAG_NAME }} already exists. Uploading Plume.apk asset with overwrite..."
+            gh release upload "${{ env.TAG_NAME }}" Plume.apk --clobber
+          else
+            echo "Creating release ${{ env.TAG_NAME }}..."
+            gh release create "${{ env.TAG_NAME }}" Plume.apk \
+              --title "Plume Launcher ${{ env.VERSION_NAME }}" \
+              --notes "$NOTES" \
+              --target main
+          fi
 
       # -------------------------------------------------------------
       # PREPARE FIREBASE HOSTING PAYLOAD

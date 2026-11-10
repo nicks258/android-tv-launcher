@@ -29,9 +29,21 @@ echo "=================================================="
 
 cd "$DIR"
 
+# Determine version code and name from tags or fallback
+LATEST_TAG=$(git tag -l "v1.6.*" 2>/dev/null | sort -V | tail -n 1)
+LATEST_NUM=6
+if [ -n "$LATEST_TAG" ]; then
+    TAG_NUM=$(echo "$LATEST_TAG" | sed 's/v1\.6\.//')
+    if [ "$TAG_NUM" -ge "$LATEST_NUM" ] 2>/dev/null; then
+        LATEST_NUM=$TAG_NUM
+    fi
+fi
+VERSION_NAME="1.6.${LATEST_NUM}"
+VERSION_CODE=$((800 + LATEST_NUM))
+
 # Assemble Release APK
-echo "📦 Assembling Release APK..."
-./gradlew assembleRelease -PversionCode=807 -PversionName=1.6.7 --daemon --parallel -x test -x lint
+echo "📦 Assembling Release APK (version $VERSION_NAME, code $VERSION_CODE)..."
+./gradlew assembleRelease -PversionCode=$VERSION_CODE -PversionName="$VERSION_NAME" --daemon --parallel -x test -x lint
 
 RELEASE_APK="$DIR/app/build/outputs/apk/release/app-release.apk"
 
@@ -53,8 +65,8 @@ RELEASE_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 cat <<EOF > "$DIR/distribution/launcher-version.json"
 {
-  "versionCode": 807,
-  "versionName": "1.6.7",
+  "versionCode": $VERSION_CODE,
+  "versionName": "$VERSION_NAME",
   "apkUrl": "https://iptv-harbor.web.app/launcher.bin",
   "apkSize": $BYTES,
   "sha256": "$SHA256",
